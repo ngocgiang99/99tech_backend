@@ -175,6 +175,77 @@ mise run fresh                 # one-shot: wipe volumes, rebuild, bring it all b
 
 ---
 
+## Running Tests
+
+Tests are split into two layers with separate Vitest configs:
+
+| Command | What it runs | Typical runtime |
+|---------|--------------|-----------------|
+| `pnpm test:unit` | Pure-logic unit tests under `tests/unit/` | &lt; 1 s |
+| `pnpm test:integration` | Full HTTP stack against real Postgres + Redis (Testcontainers) | 5–30 s |
+| `pnpm test` | Unit layer, then integration layer | 5–30 s |
+| `pnpm test:watch` | Unit layer in watch mode (live reload on save) | — |
+| `pnpm test:coverage` | Unit layer with v8 coverage + HTML report in `coverage/` | &lt; 2 s |
+
+### Unit tests — fast, no Docker
+
+```bash
+pnpm test:unit
+```
+
+Covers pure logic that doesn't touch a database, a cache, or the network:
+Zod schemas, cursor encode/decode, cache-key derivation, singleflight
+coalescing, error-class-to-HTTP translation. The unit layer runs in well
+under a second and is the right thing to bind to your editor on-save.
+
+### Integration tests — real Postgres + Redis via Testcontainers
+
+```bash
+pnpm test:integration
+```
+
+**Prerequisite: a running Docker daemon.** Testcontainers boots a
+`postgres:16-alpine` and a `redis:7-alpine` container per test run, applies
+the migrations from `migrations/` to the fresh Postgres instance, and
+constructs the Express app from `src/app.ts` with clients pointed at the
+containers. Every test file goes through `supertest` so the entire middleware
+chain (request-id, error-handler, `X-Cache`, body parser) is exercised
+end-to-end.
+
+State is reset between tests via `TRUNCATE resources RESTART IDENTITY` and
+Redis `FLUSHDB` (see `tests/integration/fixtures/db.ts`). Containers are
+started once per run and torn down on global teardown.
+
+If Testcontainers cannot find Docker, the run fails fast with a clear error.
+Make sure `docker ps` works before running this layer.
+
+### Coverage
+
+```bash
+pnpm test:coverage
+```
+
+Runs the unit layer with v8 coverage collection and prints a table plus
+writes an HTML report to `coverage/index.html`. The gate is set to **80%
+line coverage** on the pure-logic modules covered by the unit layer;
+wiring/router/repository/controller code is validated by the integration
+layer, not the coverage gate.
+
+### Debugging a failing integration test
+
+```bash
+# Verbose reporter — shows individual it() names as they run
+pnpm test:integration --reporter=verbose
+
+# Inspect Testcontainers logs live
+DEBUG=testcontainers* pnpm test:integration
+```
+
+If a test hangs on startup, check that no stale containers are holding
+port bindings from a previous run: `docker ps -a` and remove orphans.
+
+---
+
 ## Project Structure
 
 ```

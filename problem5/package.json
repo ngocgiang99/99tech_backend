@@ -15,6 +15,11 @@
     "lint": "eslint src --ext .ts",
     "format": "prettier --write src",
     "check": "pnpm typecheck && pnpm lint",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.config.integration.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "db:migrate": "kysely migrate:latest",
     "db:migrate:down": "kysely migrate:rollback",
     "db:reset": "kysely migrate:rollback && kysely migrate:latest"
@@ -32,16 +37,23 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^11.14.0",
+    "@testcontainers/redis": "^11.14.0",
     "@types/express": "^5.0.1",
     "@types/node": "^22.13.14",
     "@types/pg": "^8.20.0",
+    "@types/supertest": "^7.2.0",
     "@types/uuid": "^10.0.0",
     "@typescript-eslint/eslint-plugin": "^8.28.0",
     "@typescript-eslint/parser": "^8.28.0",
+    "@vitest/coverage-v8": "^4.1.4",
     "eslint": "^8.57.1",
     "eslint-plugin-import": "^2.31.0",
     "prettier": "^3.5.3",
+    "supertest": "^7.2.2",
+    "testcontainers": "^11.14.0",
     "tsx": "^4.19.3",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vitest": "^4.1.4"
   }
 }

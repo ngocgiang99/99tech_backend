@@ -1,4 +1,15 @@
-## ADDED Requirements
+# testing-framework
+
+## Purpose
+
+Defines how the project organizes automated tests, how integration tests
+get their datastores, what coverage gate exists, and what output formats
+the runner supports. The goal is to keep the unit layer fast enough to
+bind to save/commit while the integration layer exercises real Postgres
+and Redis end-to-end through the full Express stack. Benchmarks are owned
+by a separate capability and are deliberately out of scope here.
+
+## Requirements
 
 ### Requirement: Two-Layer Test Structure
 
@@ -120,7 +131,7 @@ The integration layer SHALL exercise every HTTP endpoint defined by `resources-m
 
 ### Requirement: Coverage Gate
 
-The test runner SHALL enforce a line-coverage threshold of at least 80% on `src/**/*.ts` when `pnpm test:coverage` is run, and SHALL fail the build if the threshold is not met.
+The test runner SHALL enforce a line-coverage threshold of at least 80% on the pure-logic modules included in the unit layer's coverage scope when `pnpm test:coverage` is run, and SHALL fail the build if the threshold is not met. Wiring, repositories, routers, and HTTP handlers are exercised by the integration layer and are deliberately excluded from the coverage include-list.
 
 #### Scenario: Coverage meets the threshold
 
