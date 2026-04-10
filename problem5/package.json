@@ -22,6 +22,7 @@
   "dependencies": {
     "dotenv": "^16.4.7",
     "express": "^5.0.1",
+    "ioredis": "^5.10.1",
     "kysely": "^0.28.16",
     "kysely-ctl": "^0.20.0",
     "pg": "^8.20.0",

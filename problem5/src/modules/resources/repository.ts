@@ -5,6 +5,7 @@ import type { Database, Resource } from '../../db/schema.js';
 
 import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery, SortValue } from './schema.js';
 import type { CursorPayload } from './cursor.js';
+import type { RequestContext } from './request-context.js';
 
 export interface ListResult {
   data: Resource[];
@@ -12,11 +13,11 @@ export interface ListResult {
 }
 
 export interface ResourceRepository {
-  create(input: CreateResourceInput): Promise<Resource>;
-  findById(id: string): Promise<Resource | null>;
-  list(query: ListResourcesQuery): Promise<ListResult>;
-  update(id: string, input: UpdateResourceInput): Promise<Resource | null>;
-  delete(id: string): Promise<boolean>;
+  create(input: CreateResourceInput, ctx?: RequestContext): Promise<Resource>;
+  findById(id: string, ctx?: RequestContext): Promise<Resource | null>;
+  list(query: ListResourcesQuery, ctx?: RequestContext): Promise<ListResult>;
+  update(id: string, input: UpdateResourceInput, ctx?: RequestContext): Promise<Resource | null>;
+  delete(id: string, ctx?: RequestContext): Promise<boolean>;
 }
 
 type ResourceSelectQuery = SelectQueryBuilder<Database, 'resources', Resource>;

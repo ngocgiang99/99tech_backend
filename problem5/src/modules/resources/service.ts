@@ -3,6 +3,7 @@ import type { Resource } from '../../db/schema.js';
 
 import type { ResourceRepository, ListResult } from './repository.js';
 import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery } from './schema.js';
+import type { RequestContext } from './request-context.js';
 import { decodeCursor, encodeCursor } from './cursor.js';
 
 export interface ListResponse {
@@ -13,19 +14,19 @@ export interface ListResponse {
 export class ResourceService {
   constructor(private readonly repo: ResourceRepository) {}
 
-  async create(input: CreateResourceInput): Promise<Resource> {
-    return this.repo.create(input);
+  async create(input: CreateResourceInput, ctx?: RequestContext): Promise<Resource> {
+    return this.repo.create(input, ctx);
   }
 
-  async getById(id: string): Promise<Resource> {
-    const resource = await this.repo.findById(id);
+  async getById(id: string, ctx?: RequestContext): Promise<Resource> {
+    const resource = await this.repo.findById(id, ctx);
     if (!resource) {
       throw new NotFoundError('Resource not found');
     }
     return resource;
   }
 
-  async list(query: ListResourcesQuery): Promise<ListResponse> {
+  async list(query: ListResourcesQuery, ctx?: RequestContext): Promise<ListResponse> {
     // Decode cursor if present, inject decoded payload back into query
     let effectiveQuery = query;
     if (query.cursor) {
@@ -34,7 +35,7 @@ export class ResourceService {
       effectiveQuery = { ...query, cursor: decoded as unknown as string };
     }
 
-    const result: ListResult = await this.repo.list(effectiveQuery);
+    const result: ListResult = await this.repo.list(effectiveQuery, ctx);
 
     return {
       data: result.data,
@@ -42,16 +43,16 @@ export class ResourceService {
     };
   }
 
-  async update(id: string, input: UpdateResourceInput): Promise<Resource> {
-    const resource = await this.repo.update(id, input);
+  async update(id: string, input: UpdateResourceInput, ctx?: RequestContext): Promise<Resource> {
+    const resource = await this.repo.update(id, input, ctx);
     if (!resource) {
       throw new NotFoundError('Resource not found');
     }
     return resource;
   }
 
-  async delete(id: string): Promise<void> {
-    const deleted = await this.repo.delete(id);
+  async delete(id: string, ctx?: RequestContext): Promise<void> {
+    const deleted = await this.repo.delete(id, ctx);
     if (!deleted) {
       throw new NotFoundError('Resource not found');
     }

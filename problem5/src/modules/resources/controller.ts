@@ -5,6 +5,7 @@ import { ValidationError } from '../../lib/errors.js';
 import type { Resource } from '../../db/schema.js';
 
 import type { ResourceService } from './service.js';
+import { createRequestContext, type CacheStatus } from './request-context.js';
 import {
   CreateResourceSchema,
   UpdateResourceSchema,
@@ -43,7 +44,23 @@ export interface ResourceController {
   delete: RequestHandler;
 }
 
-export function createResourceController(service: ResourceService): ResourceController {
+export interface ResourceControllerOptions {
+  /**
+   * When `false`, GET handlers skip the cache context entirely and stamp
+   * every response with `X-Cache: BYPASS`. When `true`, the cache layer
+   * reports HIT/MISS through the request context.
+   */
+  cacheEnabled: boolean;
+}
+
+export function createResourceController(
+  service: ResourceService,
+  options: ResourceControllerOptions,
+): ResourceController {
+  const markCacheStatus = (res: Parameters<RequestHandler>[1], status: CacheStatus): void => {
+    res.locals['cacheStatus'] = status;
+  };
+
   const create: RequestHandler = async (req, res, next) => {
     try {
       const parseResult = CreateResourceSchema.safeParse(req.body);
@@ -63,7 +80,15 @@ export function createResourceController(service: ResourceService): ResourceCont
       if (typeof id !== 'string' || !UUID_REGEX.test(id)) {
         throw new ValidationError('id must be a valid UUID');
       }
-      const resource = await service.getById(id);
+      if (!options.cacheEnabled) {
+        markCacheStatus(res, 'BYPASS');
+        const resource = await service.getById(id);
+        res.status(200).json(toDto(resource));
+        return;
+      }
+      const ctx = createRequestContext();
+      const resource = await service.getById(id, ctx);
+      markCacheStatus(res, ctx.cacheStatus ?? 'MISS');
       res.status(200).json(toDto(resource));
     } catch (err) {
       next(err);
@@ -76,7 +101,18 @@ export function createResourceController(service: ResourceService): ResourceCont
       if (!parseResult.success) {
         throw handleZodError(parseResult.error);
       }
-      const result = await service.list(parseResult.data);
+      if (!options.cacheEnabled) {
+        markCacheStatus(res, 'BYPASS');
+        const result = await service.list(parseResult.data);
+        res.status(200).json({
+          data: result.data.map(toDto),
+          nextCursor: result.nextCursor,
+        });
+        return;
+      }
+      const ctx = createRequestContext();
+      const result = await service.list(parseResult.data, ctx);
+      markCacheStatus(res, ctx.cacheStatus ?? 'MISS');
       res.status(200).json({
         data: result.data.map(toDto),
         nextCursor: result.nextCursor,

@@ -263,15 +263,19 @@ curl "http://localhost:3000/resources?limit=10&cursor=eyJjcmVh..."
 
 All variables are listed in `.env.example` with their defaults.
 
-| Variable              | Required | Default                                            | Description                        |
-|-----------------------|----------|----------------------------------------------------|-------------------------------------|
-| `NODE_ENV`            | No       | `development`                                      | Runtime environment                |
-| `PORT`                | No       | `3000`                                             | HTTP listener port                 |
-| `LOG_LEVEL`           | No       | `info`                                             | Pino log level                     |
-| `DATABASE_URL`        | **Yes**  | `postgresql://postgres:postgres@localhost:5432/...` | Postgres connection URL            |
-| `DB_POOL_MAX`         | No       | `10`                                               | Max Postgres pool connections      |
-| `REDIS_URL`           | **Yes**  | `redis://localhost:6379`                           | Redis connection URL               |
-| `SHUTDOWN_TIMEOUT_MS` | No       | `10000`                                            | Max ms to drain before force-exit  |
+| Variable                        | Required | Default                                            | Description                         |
+|---------------------------------|----------|----------------------------------------------------|-------------------------------------|
+| `NODE_ENV`                      | No       | `development`                                      | Runtime environment                 |
+| `PORT`                          | No       | `3000`                                             | HTTP listener port                  |
+| `LOG_LEVEL`                     | No       | `info`                                             | Pino log level                      |
+| `DATABASE_URL`                  | **Yes**  | `postgresql://postgres:postgres@localhost:5432/...` | Postgres connection URL             |
+| `DB_POOL_MAX`                   | No       | `10`                                               | Max Postgres pool connections       |
+| `REDIS_URL`                     | **Yes**  | `redis://localhost:6379`                           | Redis connection URL                |
+| `CACHE_ENABLED`                 | No       | `true`                                             | Kill switch for the Redis cache     |
+| `CACHE_DETAIL_TTL_SECONDS`      | No       | `300`                                              | TTL for `GET /resources/:id` cache  |
+| `CACHE_LIST_TTL_SECONDS`        | No       | `60`                                               | TTL for `GET /resources` list cache |
+| `CACHE_LIST_VERSION_KEY_PREFIX` | No       | `resource:list:version`                            | Redis key for list version counter  |
+| `SHUTDOWN_TIMEOUT_MS`           | No       | `10000`                                            | Max ms to drain before force-exit   |
 
 ### Database Migrations
 
@@ -289,3 +293,78 @@ something like `migrations/20260411_143022_add_users.ts`. Kysely sorts migration
 lexicographically, so UTC datetime prefixes guarantee chronological execution order.
 The legacy numeric file (`0001_create_resources.ts`) still sorts before any
 datetime-prefixed file, so existing and new migrations coexist safely.
+
+---
+
+## Caching
+
+`GET /resources/:id` and `GET /resources` are served through a Redis cache layer
+implemented as a decorator over the Postgres repository. The cache is transparent
+to callers — response bodies are identical whether the data came from Redis or
+Postgres — but an `X-Cache` response header reports the outcome on every GET.
+
+### Strategy
+
+- **Cache-aside** (lazy). Reads check Redis first; on miss, the query runs
+  against Postgres and the result is written back with a TTL. Writes commit
+  to Postgres first, then invalidate affected cache entries.
+- **Detail caching** (`GET /:id`). Keyed as `resource:v1:id:{uuid}`, TTL
+  `CACHE_DETAIL_TTL_SECONDS` (default 300 s). Deleted on `PATCH` / `DELETE`.
+- **List caching** (`GET /resources`). Keyed as
+  `resource:v1:list:{version}:{sha256-16(normalizedFilters)}`, TTL
+  `CACHE_LIST_TTL_SECONDS` (default 60 s). Filter tuples are normalized
+  (keys sorted, array values sorted) before hashing, so `?status=a&status=b`
+  and `?status=b&status=a` resolve to the same cache entry.
+- **List invalidation via a version counter.** Instead of tracking which
+  list pages contain a given resource, a single counter
+  (`resource:list:version`) is embedded in every list key. Any write
+  `INCR`s it, so every subsequent list request constructs a key with the
+  new version and misses. Old keys orphan-expire via their TTL within 60 s.
+  This trades a tiny amount of wasted Redis memory for near-zero
+  invalidation bookkeeping.
+- **In-process singleflight.** Concurrent cache misses on the same key
+  coalesce into a single upstream query via an in-memory promise map,
+  so a burst of N identical requests triggers at most one Postgres read.
+
+### Graceful degradation
+
+Every Redis operation is wrapped in try/catch. On failure the service logs
+at `warn` and falls through to Postgres — reads survive and writes still
+commit. The `cache` check on `/healthz` reports the outage separately, so
+a Redis outage does **not** take down the GET path.
+
+### `X-Cache` response header
+
+When `NODE_ENV !== 'production'`, every successful `GET` on a resource route
+carries an `X-Cache` header:
+
+| Value    | Meaning                                                       |
+|----------|---------------------------------------------------------------|
+| `HIT`    | Served from Redis.                                            |
+| `MISS`   | Fell through to Postgres; result was cached for next request. |
+| `BYPASS` | The cache is disabled (`CACHE_ENABLED=false`).                |
+
+```bash
+curl -i http://localhost:3000/resources/{id} | grep X-Cache
+# First call  → X-Cache: MISS
+# Second call → X-Cache: HIT
+# After PATCH → X-Cache: MISS  (detail entry was invalidated)
+```
+
+**Production suppression.** In `NODE_ENV=production` the header is omitted
+to avoid disclosing cache state to clients (mild fingerprinting and
+cache-poisoning recon signal). The cache layer still runs — only the
+observability header is silenced. S05 benchmarks run against a
+`NODE_ENV=development` target so k6 can still assert hit rates.
+
+### Kill switch: `CACHE_ENABLED=false`
+
+Starting the service with `CACHE_ENABLED=false` skips the cache layer
+entirely: every GET runs against Postgres and responds with `X-Cache: BYPASS`,
+and Redis is never read or written for resource data. The `cache` health
+check still runs, because operators still want to know whether Redis
+itself is reachable.
+
+```bash
+CACHE_ENABLED=false mise run dev
+```

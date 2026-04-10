@@ -2,6 +2,7 @@ import express from 'express';
 import type pino from 'pino';
 import pinoHttp from 'pino-http';
 import type { Kysely } from 'kysely';
+import type Redis from 'ioredis';
 
 import { createErrorHandler } from '../middleware/error-handler.js';
 import { requestIdMiddleware } from '../middleware/request-id.js';
@@ -11,10 +12,20 @@ import { createResourcesRouter } from '../modules/resources/router.js';
 
 import { createHealthRouter } from './routes/health.js';
 
+export interface CacheWiring {
+  redis: Redis;
+  cacheEnabled: boolean;
+  detailTtlSeconds: number;
+  listTtlSeconds: number;
+  listVersionKeyPrefix: string;
+  nodeEnv: string;
+}
+
 export function buildApp(
   logger: pino.Logger,
   healthRegistry: HealthCheckRegistry,
   db: Kysely<Database>,
+  cache: CacheWiring,
 ): express.Express {
   const app = express();
 
@@ -35,7 +46,7 @@ export function buildApp(
 
   // Routes
   app.use(createHealthRouter(healthRegistry));
-  app.use('/resources', createResourcesRouter(db));
+  app.use('/resources', createResourcesRouter(db, cache, logger));
 
   // Central error handler (must be last)
   app.use(createErrorHandler(logger));

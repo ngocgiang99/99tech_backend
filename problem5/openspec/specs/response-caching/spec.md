@@ -1,4 +1,16 @@
-## ADDED Requirements
+# response-caching
+
+## Purpose
+
+Defines the caller-visible contract for caching `GET /resources/:id` and
+`GET /resources` responses: how entries are populated, how writes invalidate
+them, how concurrent misses are deduplicated, how outages degrade, and how
+operators observe cache state via the `X-Cache` response header. The
+underlying implementation (Redis + cache-aside decorator + list version
+counter) is an implementation detail; this spec describes the behaviour a
+client can rely on.
+
+## Requirements
 
 ### Requirement: Cache-Aside on Get-by-Id
 
@@ -103,24 +115,31 @@ The service SHALL deduplicate concurrent cache misses on the same key within a s
 
 ### Requirement: Cache Observability Header
 
-The service SHALL set the `X-Cache` response header on every successful `GET /resources` and `GET /resources/:id` response to either `HIT`, `MISS`, or `BYPASS`.
+The service SHALL set the `X-Cache` response header on every successful `GET /resources` and `GET /resources/:id` response to either `HIT`, `MISS`, or `BYPASS` when `NODE_ENV` is not `production`. In `production` the header SHALL be omitted to avoid disclosing cache state to clients.
 
 #### Scenario: Cache hit
 
-- **WHEN** a GET request is served from Redis
+- **WHEN** a GET request is served from Redis and `NODE_ENV` is not `production`
 - **THEN** the response includes `X-Cache: HIT`
 
 #### Scenario: Cache miss
 
-- **WHEN** a GET request falls through to Postgres and the result is cached
+- **WHEN** a GET request falls through to Postgres and the result is cached and `NODE_ENV` is not `production`
 - **THEN** the response includes `X-Cache: MISS`
 
 #### Scenario: Cache disabled via feature flag
 
-- **WHEN** the service is started with `CACHE_ENABLED=false`
+- **WHEN** the service is started with `CACHE_ENABLED=false` and `NODE_ENV` is not `production`
 - **THEN** every GET response includes `X-Cache: BYPASS`
 - **AND** Redis is never read or written for resource data
 - **AND** the `cache` health check still runs (Redis still has to be reachable for health purposes, because we still want to monitor it)
+
+#### Scenario: Production suppresses the observability header
+
+- **WHEN** the service runs with `NODE_ENV=production`
+- **THEN** successful GET responses do not include an `X-Cache` header
+- **AND** the cache layer continues to operate normally (HIT/MISS behaviour is unchanged)
+- **AND** the `cache` health check continues to run
 
 ### Requirement: Cache Key Derivation
 
