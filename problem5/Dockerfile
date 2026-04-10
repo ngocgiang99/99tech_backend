@@ -45,6 +45,14 @@ RUN pnpm install --frozen-lockfile --prod
 # Copy compiled output from build stage
 COPY --from=build /app/dist ./dist
 
+# Copy migrations and kysely config for runtime migrations
+COPY migrations ./migrations
+COPY kysely.config.ts ./kysely.config.ts
+
+# Copy entrypoint script
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
 # Run as non-root user (node user exists in node:alpine)
 USER node
 
@@ -53,4 +61,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
   CMD wget -qO- "http://localhost:${PORT:-3000}/healthz?probe=liveness" || exit 1
 
-CMD ["node", "dist/index.js"]
+CMD ["sh", "./entrypoint.sh"]

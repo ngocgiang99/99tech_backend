@@ -14,11 +14,17 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write src",
-    "check": "pnpm typecheck && pnpm lint"
+    "check": "pnpm typecheck && pnpm lint",
+    "db:migrate": "kysely migrate:latest",
+    "db:migrate:down": "kysely migrate:rollback",
+    "db:reset": "kysely migrate:rollback && kysely migrate:latest"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
     "express": "^5.0.1",
+    "kysely": "^0.28.16",
+    "kysely-ctl": "^0.20.0",
+    "pg": "^8.20.0",
     "pino": "^9.6.0",
     "pino-http": "^10.4.0",
     "uuid": "^11.1.0",
@@ -27,6 +33,7 @@
   "devDependencies": {
     "@types/express": "^5.0.1",
     "@types/node": "^22.13.14",
+    "@types/pg": "^8.20.0",
     "@types/uuid": "^10.0.0",
     "@typescript-eslint/eslint-plugin": "^8.28.0",
     "@typescript-eslint/parser": "^8.28.0",

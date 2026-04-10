@@ -1,4 +1,13 @@
-## ADDED Requirements
+# resources-management
+
+## Purpose
+
+Defines the `Resource` domain entity and the HTTP contract for creating,
+reading, listing, updating, and deleting resources. Covers the request/response
+schemas, filter and pagination semantics for the list endpoint, and the
+shared error-response shape that all resource endpoints honor.
+
+## Requirements
 
 ### Requirement: Resource Entity Schema
 

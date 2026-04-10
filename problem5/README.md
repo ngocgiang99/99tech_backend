@@ -30,7 +30,15 @@ An ExpressJS + TypeScript CRUD service backed by Postgres and Redis.
 
    This starts three containers (`api`, `postgres`, `redis`) on a private Docker network. The API waits for Postgres and Redis to pass their healthchecks before starting.
 
-4. **Verify the service is live**
+4. **Run database migrations** (if running locally outside Docker)
+
+   ```bash
+   pnpm db:migrate
+   ```
+
+   Inside Docker Compose this runs automatically on container startup before the server starts.
+
+5. **Verify the service is live**
 
    ```bash
    curl http://localhost:3000/healthz
@@ -39,10 +47,36 @@ An ExpressJS + TypeScript CRUD service backed by Postgres and Redis.
    Expected response:
 
    ```json
-   {"status":"ok","checks":{}}
+   {"status":"ok","checks":{"db":{"status":"up"}}}
    ```
 
-5. **You're done.** The API is accepting requests at `http://localhost:3000`.
+6. **You're done.** The API is accepting requests at `http://localhost:3000`.
+
+## First Request
+
+Create your first resource:
+
+```bash
+curl -s -X POST http://localhost:3000/resources \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"my-widget","type":"widget","tags":["demo"]}' | jq .
+```
+
+Sample response:
+
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "name": "my-widget",
+  "type": "widget",
+  "status": "active",
+  "tags": ["demo"],
+  "ownerId": null,
+  "metadata": {},
+  "createdAt": "2026-04-10T19:00:00.000Z",
+  "updatedAt": "2026-04-10T19:00:00.000Z"
+}
+```
 
 ---
 
@@ -112,19 +146,34 @@ docker build -t resources-api .   # Rebuild the image
 src/
   config/
     env.ts            # Zod-validated environment configuration
+  db/
+    client.ts         # Kysely + pg Pool factory
+    health.ts         # DB health check (SELECT 1 with 1s timeout)
+    schema.ts         # Kysely Database type definitions
   http/
     app.ts            # Express application factory
     routes/
       health.ts       # GET /healthz endpoint
   lib/
-    health.ts         # HealthCheckRegistry (extensible for DB/Redis checks)
+    errors.ts         # AppError taxonomy (ValidationError, NotFoundError, ConflictError)
+    health.ts         # HealthCheckRegistry
     logger.ts         # Pino JSON logger
     shutdown.ts       # Graceful shutdown manager
   middleware/
-    error-handler.ts  # Central error handler middleware
+    error-handler.ts  # Central error handler (maps AppError → spec shape)
     request-id.ts     # X-Request-Id propagation middleware
-  modules/            # Feature modules land here (Change 2+)
+  modules/
+    resources/
+      cursor.ts       # Keyset cursor encode/decode
+      controller.ts   # Express RequestHandler wrappers (Zod → service → HTTP)
+      repository.ts   # Kysely-backed ResourceRepository
+      router.ts       # Mounts 5 endpoints at /resources
+      schema.ts       # Zod schemas: Create/Update/List/Resource
+      service.ts      # Business logic (throws typed errors)
   index.ts            # Process entry point
+migrations/
+  0001_create_resources.ts  # Creates resources table + 5 indexes
+kysely.config.ts      # kysely-ctl migration config
 ```
 
 ---
@@ -135,8 +184,43 @@ src/
 |--------|----------------------------|--------------------------|
 | GET    | /healthz                   | Liveness + readiness     |
 | GET    | /healthz?probe=liveness    | Liveness only (fast)     |
+| POST   | /resources                 | Create a resource        |
+| GET    | /resources                 | List resources (filtered, paginated) |
+| GET    | /resources/:id             | Get resource by ID       |
+| PATCH  | /resources/:id             | Partially update resource |
+| DELETE | /resources/:id             | Delete resource          |
 
-Resource CRUD endpoints are introduced in Change 2.
+### List Resources — Filter Parameters
+
+`GET /resources` accepts the following query parameters:
+
+| Parameter      | Type     | Description                                                       |
+|---------------|----------|-------------------------------------------------------------------|
+| `type`        | string   | Exact match on `type` field                                       |
+| `status`      | string   | Exact match on `status`; repeat for OR: `?status=active&status=pending` |
+| `tag`         | string   | Tag must be present; repeat for AND: `?tag=red&tag=urgent` (all must match) |
+| `ownerId`     | UUID     | Exact match on `ownerId`                                          |
+| `createdAfter` | ISO-8601 | Inclusive lower bound on `createdAt`                             |
+| `createdBefore` | ISO-8601 | Exclusive upper bound on `createdAt`                            |
+| `limit`       | integer  | Page size `[1, 100]`, default `20`                                |
+| `cursor`      | string   | Opaque keyset cursor from previous `nextCursor` response          |
+| `sort`        | string   | One of: `-createdAt` (default), `createdAt`, `-updatedAt`, `updatedAt`, `name`, `-name` |
+
+### Keyset Pagination
+
+The list endpoint uses keyset (cursor-based) pagination, not offset. This ensures O(index-seek) performance regardless of page depth.
+
+```bash
+# First page
+curl "http://localhost:3000/resources?limit=10"
+# Response includes nextCursor: "eyJjcmVh..."
+
+# Next page
+curl "http://localhost:3000/resources?limit=10&cursor=eyJjcmVh..."
+# When nextCursor is null, you have reached the last page
+```
+
+**Important:** The cursor is opaque — do not parse or modify it. If you change the `sort` parameter, the cursor from the previous sort becomes invalid and the server will return a `400 VALIDATION` error.
 
 ---
 
@@ -150,5 +234,14 @@ All variables are listed in `.env.example` with their defaults.
 | `PORT`                | No       | `3000`                                             | HTTP listener port                 |
 | `LOG_LEVEL`           | No       | `info`                                             | Pino log level                     |
 | `DATABASE_URL`        | **Yes**  | `postgresql://postgres:postgres@localhost:5432/...` | Postgres connection URL            |
+| `DB_POOL_MAX`         | No       | `10`                                               | Max Postgres pool connections      |
 | `REDIS_URL`           | **Yes**  | `redis://localhost:6379`                           | Redis connection URL               |
 | `SHUTDOWN_TIMEOUT_MS` | No       | `10000`                                            | Max ms to drain before force-exit  |
+
+### Database Migrations
+
+```bash
+pnpm db:migrate        # Apply all pending migrations
+pnpm db:migrate:down   # Rollback all migrations
+pnpm db:reset          # Rollback + re-apply all migrations
+```
