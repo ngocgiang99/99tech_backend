@@ -2,4 +2,108 @@
 node = "22.14.0"
 pnpm = "9.15.4"
 k6 = "0.56.0"
-"npm:openspec-cli" = "1.2.3"
+
+# ---------------------------------------------------------------------------
+# Developer-facing tasks. Run with: mise run <task>  (or the alias `mise r`)
+# List everything with: mise tasks
+# These are thin wrappers over pnpm/docker so day-to-day commands are uniform.
+# Underlying package.json scripts are still the implementation layer — the
+# Dockerfile and CI call pnpm directly, so do not delete them.
+# ---------------------------------------------------------------------------
+
+# --- Install / bootstrap ---------------------------------------------------
+
+[tasks.install]
+description = "Install Node deps via pnpm (frozen lockfile)"
+run = "pnpm install --frozen-lockfile"
+
+# --- Dev loop --------------------------------------------------------------
+
+[tasks.dev]
+description = "Run the API with live reload (tsx watch)"
+run = "pnpm dev"
+
+[tasks."dev:pretty"]
+description = "Run the API with pretty-printed logs (pino-pretty)"
+run = "pnpm dev | npx pino-pretty"
+
+# --- Build / run -----------------------------------------------------------
+
+[tasks.build]
+description = "Compile TypeScript → dist/"
+run = "pnpm build"
+
+[tasks.start]
+description = "Run the compiled app (requires `mise run build`)"
+run = "pnpm start"
+
+# --- Quality gates ---------------------------------------------------------
+
+[tasks.check]
+description = "Typecheck + lint (must pass before committing)"
+run = "pnpm check"
+
+[tasks.lint]
+description = "Lint src/ with ESLint"
+run = "pnpm lint"
+
+[tasks.format]
+description = "Auto-format src/ with Prettier"
+run = "pnpm format"
+
+# --- Database migrations ---------------------------------------------------
+
+[tasks."db:migrate"]
+description = "Apply all pending migrations (kysely migrate:latest)"
+run = "pnpm db:migrate"
+
+[tasks."db:rollback"]
+description = "Rollback the last migration"
+run = "pnpm db:migrate:down"
+
+[tasks."db:reset"]
+description = "Rollback + re-apply all migrations"
+run = "pnpm db:reset"
+
+[tasks."db:make"]
+description = "Create a new migration — usage: mise run db:make -- <description>"
+run = "pnpm exec kysely migrate:make"
+
+# --- Docker stack ----------------------------------------------------------
+
+[tasks.up]
+description = "Start the full stack (api + postgres + redis) in the background"
+run = "docker compose up -d"
+
+[tasks."up:build"]
+description = "Rebuild images and start the full stack"
+run = "docker compose up -d --build"
+
+[tasks.down]
+description = "Stop containers (volumes persist)"
+run = "docker compose down"
+
+[tasks."down:volumes"]
+description = "Stop containers AND remove volumes (fresh DB on next up)"
+run = "docker compose down -v"
+
+[tasks.ps]
+description = "Show status of stack containers"
+run = "docker compose ps"
+
+[tasks."docker:build"]
+description = "Build the runtime image standalone (no compose)"
+run = "docker build -t resources-api ."
+
+# --- Composite / convenience ----------------------------------------------
+
+[tasks.health]
+description = "Curl /healthz against the running stack"
+run = "curl -sf http://localhost:3000/healthz | jq ."
+
+[tasks.fresh]
+description = "Wipe volumes, rebuild, bring stack up — the full reset"
+run = [
+  "docker compose down -v",
+  "docker compose up -d --build",
+]

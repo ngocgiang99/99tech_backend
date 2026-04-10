@@ -10,27 +10,44 @@ ExpressJS 5 + TypeScript CRUD service backed by Postgres (Kysely) and Redis, bui
 
 ### Commands
 
+Day-to-day commands are exposed as **mise tasks** (see `mise.toml`). Run
+`mise tasks` to list them all. The underlying `package.json` scripts and
+`docker compose` invocations still exist — mise is a thin wrapper so the
+Dockerfile and CI can call `pnpm` / `docker` directly — but prefer
+`mise run <task>` when working locally so everyone hits the same commands.
+
 ```bash
 # Dev loop
-pnpm dev                    # tsx watch src/index.ts — live reload
-pnpm dev | npx pino-pretty  # readable logs during dev
-pnpm check                  # typecheck + lint — MUST pass before committing
-pnpm typecheck              # tsc --noEmit
-pnpm lint                   # eslint src --ext .ts
-pnpm format                 # prettier --write src
-pnpm build                  # tsc --project tsconfig.build.json → dist/
-pnpm start                  # node dist/index.js (requires build)
+mise run dev                # tsx watch src/index.ts — live reload
+mise run dev:pretty         # same, piped through pino-pretty
+mise run check              # typecheck + lint — MUST pass before committing
+mise run lint               # eslint src --ext .ts
+mise run format             # prettier --write src
+mise run build              # tsc --project tsconfig.build.json → dist/
+mise run start              # node dist/index.js (requires build)
+mise run install            # pnpm install --frozen-lockfile
 
 # Database migrations (Kysely via kysely-ctl, reads kysely.config.ts)
-pnpm db:migrate             # kysely migrate:latest
-pnpm db:migrate:down        # kysely migrate:rollback
-pnpm db:reset               # rollback + latest
+mise run db:migrate                    # kysely migrate:latest
+mise run db:rollback                   # kysely migrate:rollback
+mise run db:reset                      # rollback + latest
+mise run db:make -- <description>      # Create new migration file
+                                       # → emits migrations/YYYYMMDD_HHMMSS_<description>.ts (UTC)
 
 # Full stack via Docker
-docker compose up -d        # api + postgres + redis, private network, healthchecks
-docker compose logs -f api
-docker compose down         # keep volumes
-docker compose down -v      # wipe volumes
+mise run up                 # api + postgres + redis, private network, healthchecks
+mise run up:build           # same, rebuilding images first
+mise run ps                 # docker compose ps
+mise run down               # stop containers, keep volumes
+mise run down:volumes       # stop + wipe volumes
+mise run fresh              # down:volumes → up:build (full reset)
+mise run docker:build       # build runtime image standalone (no compose)
+mise run health             # curl /healthz against the running stack
+docker compose logs -f api  # tail api logs (no mise wrapper — use direct)
+
+# Escape hatch — call pnpm / docker directly if you need a flag not exposed
+pnpm <script>               # package.json scripts are still there
+docker compose <subcommand> # still works, mise doesn't shadow it
 ```
 
 Toolchain is pinned via `mise.toml` (Node 22, pnpm 9, k6, OpenSpec CLI). Run `mise install` to match. ESM imports in `src/` use explicit `.js` suffixes — preserve this when adding new imports.
@@ -56,6 +73,10 @@ HTTP → requestIdMiddleware → pino-http → express.json(64kb)
 **Validation boundary** is the controller. `*.safeParse()` → on failure, `handleZodError()` → `ValidationError` with per-field details. DB row → response DTO conversion happens via module-local `toDto()` helpers that rename `owner_id`/`created_at` to camelCase and ISO-serialize dates. Keep this boundary: repositories return raw DB types; everything past the controller should see DTOs.
 
 **Kysely schema** lives in `src/db/schema.ts` as a typed `Database` interface. Add new tables here and extend `Database`. Migrations are TypeScript files in `migrations/` (see `0001_create_resources.ts` for the pattern). `kysely.config.ts` at the project root is consumed by `kysely-ctl` at CLI time and requires `DATABASE_URL` in the environment.
+
+**Migration filenames** use a UTC datetime prefix — `YYYYMMDD_HHMMSS_<description>.ts` — configured via `getMigrationPrefix` in `kysely.config.ts`. Create new migrations with `pnpm exec kysely migrate:make <description>`. Kysely sorts migrations lexicographically, so any zero-padded datetime prefix yields chronological order. The legacy `0001_create_resources.ts` still sorts before any datetime file, so the two formats coexist safely — do not retroactively rename it.
+
+**Kysely has no schema auto-diff.** Unlike Prisma Migrate, Drizzle Kit, TypeORM `schema:sync`, or Atlas, Kysely does not generate migrations from a model definition. The canonical workflow is hand-authored migrations as the source of truth, and — if needed — regenerating `src/db/schema.ts` from the live database via `kysely-codegen`. Treat `schema.ts` as generated output whenever you use codegen; do not hand-edit it in the same PR as a migration that changes its shape. See README §Database Migrations for the workflow.
 
 **List/pagination** uses keyset (cursor) pagination, not offset. The cursor is an opaque string encoding `{ createdAt, id, sort }`; the service decodes it and hands a typed payload to the repository, which builds a composite `WHERE` predicate over `(sort_column, id)` to guarantee stable ordering across sort modes (see `repository.ts:applyCursorPredicate`). Preserve this pattern when adding sortable list endpoints.
 

@@ -12,7 +12,8 @@ An ExpressJS + TypeScript CRUD service backed by Postgres and Redis.
    mise install
    ```
 
-   This installs Node 22, pnpm 9, k6, and the OpenSpec CLI in exact versions pinned in `mise.toml`.
+   This installs Node 22, pnpm 9, and k6 in exact versions pinned in `mise.toml`.
+   First-time mise users, see the [*Don't have mise?*](#dont-have-mise) section below.
 
 2. **Copy the environment template**
 
@@ -82,61 +83,95 @@ Sample response:
 
 ## Don't have mise?
 
-Install it with:
+Install it with the official one-line installer ([docs](https://mise.jdx.dev/getting-started.html)):
 
 ```bash
 curl https://mise.run | sh
 ```
 
-Then restart your shell and run `mise install` in the project root.
+Activate mise in your current shell (one-time per shell config):
+
+```bash
+# zsh
+echo 'eval "$(~/.local/bin/mise activate zsh)"' >> ~/.zshrc
+exec zsh
+
+# bash
+echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc
+exec bash
+
+# fish
+echo '~/.local/bin/mise activate fish | source' >> ~/.config/fish/config.fish
+```
+
+Then, in the project root:
+
+```bash
+mise trust          # one-time — approve the project's mise.toml
+mise install        # install pinned versions of node, pnpm, k6
+```
 
 If you prefer not to use mise, manually install:
 - **Node 22** (via nvm: `nvm install 22 && nvm use 22`)
 - **pnpm 9** (`npm install -g pnpm@9`)
+- **k6** (only needed for benchmarks — see [k6 install docs](https://k6.io/docs/get-started/installation/))
 - Then run `pnpm install`
 
 ---
 
 ## Development Workflow
 
+All day-to-day commands are exposed as **mise tasks**. Run `mise tasks` to see the
+full catalog at any time. Tasks are thin wrappers over `pnpm` and `docker compose`,
+so the Dockerfile and CI still call those directly — but as a developer you should
+reach for `mise run <task>` first.
+
+### Common tasks at a glance
+
+| Command | What it does |
+|---------|--------------|
+| `mise run install` | Install Node deps (`pnpm install --frozen-lockfile`) |
+| `mise run dev` | Start the API with live reload |
+| `mise run dev:pretty` | Same, but with pretty-printed logs (pino-pretty) |
+| `mise run check` | Typecheck + lint — **must pass before committing** |
+| `mise run lint` / `format` / `build` | Individual quality gates |
+| `mise run start` | Run the compiled build (after `mise run build`) |
+| `mise run up` / `up:build` | Start the full Docker stack (optionally rebuilding) |
+| `mise run down` / `down:volumes` | Stop stack (keep / wipe volumes) |
+| `mise run ps` | Show container status |
+| `mise run health` | `curl /healthz` against the running stack |
+| `mise run fresh` | Wipe volumes, rebuild, bring the stack up from scratch |
+| `mise run docker:build` | Build the runtime image standalone (no compose) |
+| `mise run db:migrate` / `db:rollback` / `db:reset` | Migration lifecycle |
+| `mise run db:make -- <description>` | Create a new migration file |
+
 ### Run locally (without Docker)
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Copy .env and configure DATABASE_URL / REDIS_URL to point at local instances
-cp .env.example .env
-
-# Start with live reload
-pnpm dev
+cp .env.example .env    # one-time — tweak DATABASE_URL / REDIS_URL if needed
+mise run install        # pnpm install --frozen-lockfile
+mise run dev            # live reload via tsx watch
+# or
+mise run dev:pretty     # same, with pino-pretty output
 ```
 
-For readable logs during development, pipe through `pino-pretty`:
+### Run the full stack (with Docker)
 
 ```bash
-pnpm dev | npx pino-pretty
+mise run up                    # start api + postgres + redis in the background
+docker compose logs -f api     # follow API container logs (direct — no mise wrapper)
+mise run health                # confirm /healthz returns 200
+
+mise run down                  # stop containers, keep volumes
+mise run down:volumes          # stop + wipe volumes (fresh Postgres next time)
+mise run fresh                 # one-shot: wipe volumes, rebuild, bring it all back up
 ```
 
-### Code quality checks
-
-```bash
-pnpm check          # typecheck + lint (must pass before committing)
-pnpm typecheck      # TypeScript type check only
-pnpm lint           # ESLint only
-pnpm format         # Prettier format (auto-fixes)
-pnpm build          # Compile TypeScript to dist/
-```
-
-### Docker operations
-
-```bash
-docker compose up -d          # Start the full stack in background
-docker compose logs -f api    # Follow API logs
-docker compose down           # Stop containers (volumes persist)
-docker compose down -v        # Stop containers AND remove volumes
-docker build -t resources-api .   # Rebuild the image
-```
+> **Falling back to pnpm / docker directly.** Every mise task prints the underlying
+> command it runs, so if you prefer to invoke `pnpm dev` or `docker compose up -d`
+> by hand (or your IDE integration expects it), nothing is hiding from you. The
+> `package.json` scripts in this repo are the implementation layer and are not
+> going away.
 
 ---
 
@@ -241,7 +276,16 @@ All variables are listed in `.env.example` with their defaults.
 ### Database Migrations
 
 ```bash
-pnpm db:migrate        # Apply all pending migrations
-pnpm db:migrate:down   # Rollback all migrations
-pnpm db:reset          # Rollback + re-apply all migrations
+mise run db:migrate                # Apply all pending migrations
+mise run db:rollback               # Rollback the last migration
+mise run db:reset                  # Rollback + re-apply all migrations
+mise run db:make -- <description>  # Create a new migration file
 ```
+
+**Migration filename format:** new migrations are prefixed with a UTC datetime in the
+form `YYYYMMDD_HHMMSS_<description>.ts` (configured via `getMigrationPrefix` in
+`kysely.config.ts`). For example, `mise run db:make -- add_users` generates
+something like `migrations/20260411_143022_add_users.ts`. Kysely sorts migrations
+lexicographically, so UTC datetime prefixes guarantee chronological execution order.
+The legacy numeric file (`0001_create_resources.ts`) still sorts before any
+datetime-prefixed file, so existing and new migrations coexist safely.
