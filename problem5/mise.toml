@@ -1,0 +1,5 @@
+[tools]
+node = "22.14.0"
+pnpm = "9.15.4"
+k6 = "0.56.0"
+"npm:openspec-cli" = "1.2.3"
