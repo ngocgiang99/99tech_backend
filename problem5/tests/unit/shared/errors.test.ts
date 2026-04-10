@@ -7,7 +7,7 @@ import {
   ConflictError,
   NotFoundError,
   ValidationError,
-} from '../../../src/lib/errors.js';
+} from '../../../src/shared/errors.js';
 import { createErrorHandler } from '../../../src/middleware/error-handler.js';
 
 describe('AppError subclasses', () => {

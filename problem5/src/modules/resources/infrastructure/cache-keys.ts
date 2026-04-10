@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { ListResourcesQuery } from './schema.js';
+import type { ListResourcesQuery } from '../schema.js';
 
 const KEY_VERSION = 'v1';
 const DETAIL_PREFIX = `resource:${KEY_VERSION}:id`;

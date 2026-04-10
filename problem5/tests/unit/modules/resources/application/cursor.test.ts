@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { decodeCursor, encodeCursor } from '../../../../src/modules/resources/cursor.js';
-import { ValidationError } from '../../../../src/lib/errors.js';
+import { decodeCursor, encodeCursor } from '../../../../../src/modules/resources/application/cursor.js';
+import { ValidationError } from '../../../../../src/shared/errors.js';
 
 describe('cursor encode/decode', () => {
   it('round-trips a valid payload', () => {

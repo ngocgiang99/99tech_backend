@@ -1,6 +1,6 @@
 import type Redis from 'ioredis';
 
-import type { CheckResult } from '../lib/health.js';
+import type { CheckResult } from '../../shared/health.js';
 
 const PING_TIMEOUT_MS = 1000;
 

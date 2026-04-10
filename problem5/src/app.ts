@@ -4,10 +4,10 @@ import type Redis from 'ioredis';
 import type pino from 'pino';
 
 import type { Config } from './config/env.js';
-import type { Database } from './db/schema.js';
-import { HealthCheckRegistry } from './lib/health.js';
-import { dbHealthCheck } from './db/health.js';
-import { cacheHealthCheck } from './cache/health.js';
+import type { Database } from './infrastructure/db/schema.js';
+import { HealthCheckRegistry } from './shared/health.js';
+import { dbHealthCheck } from './infrastructure/db/health.js';
+import { cacheHealthCheck } from './infrastructure/cache/health.js';
 import { buildApp } from './http/app.js';
 
 export interface Deps {

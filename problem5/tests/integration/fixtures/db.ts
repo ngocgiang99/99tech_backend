@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 import type Redis from 'ioredis';
 
-import type { Database } from '../../../src/db/schema.js';
+import type { Database } from '../../../src/infrastructure/db/schema.js';
 
 /**
  * Wipes the resources table between tests. Preferred over rollback because

@@ -1,6 +1,6 @@
 import type { RequestHandler } from 'express';
 
-import type { CacheStatus } from '../modules/resources/request-context.js';
+import type { CacheStatus } from '../modules/resources/application/request-context.js';
 
 /**
  * Reads `res.locals.cacheStatus` (set by the resources controller after

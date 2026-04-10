@@ -1,8 +1,8 @@
 import { loadConfig } from './config/env.js';
-import { createLogger } from './lib/logger.js';
-import { ShutdownManager } from './lib/shutdown.js';
-import { createDb } from './db/client.js';
-import { createRedis } from './cache/client.js';
+import { createLogger } from './shared/logger.js';
+import { ShutdownManager } from './shared/shutdown.js';
+import { createDb } from './infrastructure/db/client.js';
+import { createRedis } from './infrastructure/cache/client.js';
 import { createApp } from './app.js';
 
 function main(): void {

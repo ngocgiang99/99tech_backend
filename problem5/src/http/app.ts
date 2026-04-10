@@ -6,9 +6,9 @@ import type Redis from 'ioredis';
 
 import { createErrorHandler } from '../middleware/error-handler.js';
 import { requestIdMiddleware } from '../middleware/request-id.js';
-import type { HealthCheckRegistry } from '../lib/health.js';
-import type { Database } from '../db/schema.js';
-import { createResourcesRouter } from '../modules/resources/router.js';
+import type { HealthCheckRegistry } from '../shared/health.js';
+import type { Database } from '../infrastructure/db/schema.js';
+import { createResourcesModule } from '../modules/resources/index.js';
 
 import { createHealthRouter } from './routes/health.js';
 
@@ -46,7 +46,8 @@ export function buildApp(
 
   // Routes
   app.use(createHealthRouter(healthRegistry));
-  app.use('/resources', createResourcesRouter(db, cache, logger));
+  const resources = createResourcesModule({ db, cache, logger });
+  app.use('/resources', resources.router);
 
   // Central error handler (must be last)
   app.use(createErrorHandler(logger));

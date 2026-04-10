@@ -1,12 +1,12 @@
 import type Redis from 'ioredis';
 import type pino from 'pino';
 
-import type { Resource } from '../../db/schema.js';
-import { Singleflight } from '../../cache/singleflight.js';
+import type { Resource } from '../../../infrastructure/db/schema.js';
+import { Singleflight } from '../../../infrastructure/cache/singleflight.js';
+import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery } from '../schema.js';
+import type { RequestContext } from '../application/request-context.js';
 
 import type { ResourceRepository, ListResult } from './repository.js';
-import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery } from './schema.js';
-import type { RequestContext } from './request-context.js';
 import { detailKey, listKey, listVersionKey } from './cache-keys.js';
 
 export interface CachedRepositoryOptions {

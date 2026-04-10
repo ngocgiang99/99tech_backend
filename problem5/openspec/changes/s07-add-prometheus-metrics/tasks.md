@@ -35,12 +35,12 @@
 - [ ] 5.1 Create `src/observability/kysely-metrics-plugin.ts` implementing Kysely's `KyselyPlugin` interface with `transformQuery` (start timer) and `transformResult` (stop timer, observe histogram)
 - [ ] 5.2 Map the query node's `kind` to the `operation` label: `SelectQueryNode` → `select`, `InsertQueryNode` → `insert`, `UpdateQueryNode` → `update`, `DeleteQueryNode` → `delete`
 - [ ] 5.3 On query error, increment `db_query_errors_total{operation, error_class}` using the `error_class_allowlist` set (translate pg error codes to named classes: `23505` → `unique_violation`, `23502` → `not_null_violation`, `40P01` → `deadlock`, etc.); unknown codes map to `"other"`
-- [ ] 5.4 Register the plugin on the Kysely client in `src/db/client.ts`
+- [ ] 5.4 Register the plugin on the Kysely client in `src/infrastructure/db/client.ts`
 - [ ] 5.5 Create `src/observability/db-pool-gauge.ts` that starts a `setInterval` (5s) reading `pool.totalCount`, `pool.idleCount`, `pool.waitingCount` and updating the `db_pool_size` gauge; expose a `stop()` method for the shutdown hook
 
 ## 6. Domain Instrumentation
 
-- [ ] 6.1 Modify `src/modules/resources/controller.ts` to accept a `MetricsRegistry`
+- [ ] 6.1 Modify `src/modules/resources/presentation/controller.ts` to accept a `MetricsRegistry`
 - [ ] 6.2 In each controller method, increment `resources_operations_total{operation, outcome}` on success, validation error, not-found, and unexpected error branches
 - [ ] 6.3 Add unit tests asserting each outcome branch increments the expected counter
 

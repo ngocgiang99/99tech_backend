@@ -1,32 +1,18 @@
 import type { RequestHandler } from 'express';
 import { ZodError } from 'zod';
 
-import { ValidationError } from '../../lib/errors.js';
-import type { Resource } from '../../db/schema.js';
-
-import type { ResourceService } from './service.js';
-import { createRequestContext, type CacheStatus } from './request-context.js';
+import { ValidationError } from '../../../shared/errors.js';
+import type { ResourceService } from '../application/service.js';
+import { createRequestContext, type CacheStatus } from '../application/request-context.js';
 import {
   CreateResourceSchema,
   UpdateResourceSchema,
   ListResourcesQuerySchema,
-} from './schema.js';
+} from '../schema.js';
+
+import { toDto } from './mapper.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function toDto(resource: Resource) {
-  return {
-    id: resource.id,
-    name: resource.name,
-    type: resource.type,
-    status: resource.status,
-    tags: resource.tags,
-    ownerId: resource.owner_id,
-    metadata: resource.metadata,
-    createdAt: resource.created_at.toISOString(),
-    updatedAt: resource.updated_at.toISOString(),
-  };
-}
 
 function handleZodError(err: ZodError): ValidationError {
   const details = err.errors.map((e) => ({

@@ -2,8 +2,8 @@ import pino from 'pino';
 import supertest from 'supertest';
 
 import { loadConfig } from '../../../src/config/env.js';
-import { createDb } from '../../../src/db/client.js';
-import { createRedis } from '../../../src/cache/client.js';
+import { createDb } from '../../../src/infrastructure/db/client.js';
+import { createRedis } from '../../../src/infrastructure/cache/client.js';
 import { createApp } from '../../../src/app.js';
 import type { Deps } from '../../../src/app.js';
 

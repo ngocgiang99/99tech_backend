@@ -20,7 +20,7 @@ Dockerfile and CI can call `pnpm` / `docker` directly — but prefer
 # Dev loop
 mise run dev                # tsx watch src/index.ts — live reload
 mise run dev:pretty         # same, piped through pino-pretty
-mise run check              # typecheck + lint — MUST pass before committing
+mise run check              # typecheck + lint + unit + integration tests — MUST pass before committing (integration needs Docker)
 mise run lint               # eslint src --ext .ts
 mise run format             # prettier --write src
 mise run build              # tsc --project tsconfig.build.json → dist/
@@ -52,39 +52,82 @@ docker compose <subcommand> # still works, mise doesn't shadow it
 
 Toolchain is pinned via `mise.toml` (Node 22, pnpm 9, k6, OpenSpec CLI). Run `mise install` to match. ESM imports in `src/` use explicit `.js` suffixes — preserve this when adding new imports.
 
-There is **no test runner wired up yet** (tests arrive in OpenSpec change `s04-add-test-suite`). Do not add `pnpm test` invocations until that change lands.
+Tests are in place (`pnpm test:unit`, `pnpm test:integration`, `pnpm test` for both). Integration tests start Postgres + Redis via Testcontainers and drive the full HTTP stack through `supertest` against `createApp(deps)`; they are part of the definition of done.
 
 ### Architecture
 
-`src/index.ts` is the composition root — it wires config, logger, DB pool, health registry, shutdown manager, and Express app in strict order, then delegates signal handling to `ShutdownManager`. **All dependencies are constructor-injected**; there are no module-level singletons. When adding new wiring, follow the numbered `main()` sequence.
+The authoritative reference is [`ARCHITECTURE.md`](./ARCHITECTURE.md) at the project root — read it for the full layering rules, dependency direction, enforcement, and the "what this is NOT" section. This file summarizes the parts you need while editing code.
 
-**Layered request path:**
+The project is organized into layered directories so the dependency direction is visible at a glance:
 
 ```
-HTTP → requestIdMiddleware → pino-http → express.json(64kb)
-     → route (e.g. /resources) → controller → service → repository → Kysely → pg.Pool
-     → errorHandler (last middleware)
+src/
+  config/                         # Zod-validated env config
+  shared/                         # Cross-cutting primitives (errors, logger, health, shutdown)
+  infrastructure/                 # Driver-level primitives
+    db/                           # Kysely + pg.Pool + Database type
+    cache/                        # ioredis client + singleflight
+  http/                           # Express wiring + non-feature routes
+  middleware/                     # request-id, error-handler, x-cache
+  modules/resources/              # Feature module
+    presentation/                 # router, controller, mapper (toDto)
+    application/                  # service, cursor, request-context
+    infrastructure/               # repository, cached-repository, cache-keys
+    schema.ts                     # Zod + inferred DTO types
+    index.ts                      # createResourcesModule(deps) factory
+  app.ts                          # createApp(deps) — DI entry point
+  index.ts                        # Process entry point
 ```
 
-**Feature modules** live under `src/modules/<name>/` with a fixed file set: `router.ts` (wires DI, mounts routes), `controller.ts` (Zod validation, DTO mapping, calls service), `service.ts` (business rules, throws `AppError`), `repository.ts` (Kysely queries, returns DB rows), `schema.ts` (Zod + DTOs), and optional helpers like `cursor.ts`. `src/modules/resources/` is the canonical example — new modules should mirror its shape.
+**Composition chain (top to bottom):**
 
-**Error handling** is centralized. Throw `AppError` subclasses (`ValidationError`, `NotFoundError`, `ConflictError`) from `src/lib/errors.ts`; the middleware in `src/middleware/error-handler.ts` serializes them into `{ error: { code, message, requestId, details? } }` responses. **Never** construct JSON error bodies in controllers — `next(err)` and let the handler format it. The handler also intercepts body-parser `entity.too.large` / `entity.parse.failed` as 400 `VALIDATION` errors.
+```
+src/index.ts                               (process entry)
+     │
+     ▼ createApp({ config, logger, db, redis })
+src/app.ts                                 (DI factory — preserved for integration tests)
+     │
+     ▼ buildApp(logger, healthRegistry, db, cache)
+src/http/app.ts                            (Express wiring + middleware)
+     │
+     ▼ createResourcesModule({ db, cache, logger })
+src/modules/resources/index.ts             (module factory → { router })
+     │
+     ▼ app.use('/resources', router)
+presentation/router → presentation/controller → application/service → infrastructure/(cached-)repository → Kysely → pg.Pool
+     │
+     ▼ errorHandler (last middleware)
+```
 
-**Validation boundary** is the controller. `*.safeParse()` → on failure, `handleZodError()` → `ValidationError` with per-field details. DB row → response DTO conversion happens via module-local `toDto()` helpers that rename `owner_id`/`created_at` to camelCase and ISO-serialize dates. Keep this boundary: repositories return raw DB types; everything past the controller should see DTOs.
+**`createApp(deps)` is load-bearing** for the integration test suite (`tests/integration/fixtures/app.ts` constructs it with Testcontainers clients). Its external contract — `createApp({ config, logger, db, redis }) → { app, healthRegistry }` — must not change.
 
-**Kysely schema** lives in `src/db/schema.ts` as a typed `Database` interface. Add new tables here and extend `Database`. Migrations are TypeScript files in `migrations/` (see `0001_create_resources.ts` for the pattern). `kysely.config.ts` at the project root is consumed by `kysely-ctl` at CLI time and requires `DATABASE_URL` in the environment.
+**Feature modules** live under `src/modules/<name>/` with a fixed three-layer internal structure:
+
+- `presentation/` — `router.ts`, `controller.ts`, `mapper.ts` (DB row → DTO conversion).
+- `application/` — `service.ts` (business rules), `cursor.ts` (keyset pagination), `request-context.ts` (cache telemetry).
+- `infrastructure/` — `repository.ts` (Kysely queries), `cached-repository.ts` (Redis decorator), `cache-keys.ts` (key derivation).
+- `schema.ts` stays at the module root (shared between `presentation` and `application`, imported by both).
+- `index.ts` exports `create<Feature>Module(deps)` — the single entry point `src/http/app.ts` calls. `src/modules/resources/` is the canonical example.
+
+Dependencies flow `presentation → application → infrastructure` inside each module. ESLint `no-restricted-imports` rules enforce this at build time — a violation is a lint error, not a review comment. Type-only imports (`import type`) are allowed across layer boundaries where the symbol is purely a type.
+
+**Error handling** is centralized. Throw `AppError` subclasses (`ValidationError`, `NotFoundError`, `ConflictError`) from `src/shared/errors.ts`; the middleware in `src/middleware/error-handler.ts` serializes them into `{ error: { code, message, requestId, details? } }` responses. **Never** construct JSON error bodies in controllers — `next(err)` and let the handler format it. The handler also intercepts body-parser `entity.too.large` / `entity.parse.failed` as 400 `VALIDATION` errors.
+
+**Validation boundary** is the controller (in `presentation/`). `*.safeParse()` → on failure, `handleZodError()` → `ValidationError` with per-field details. DB row → response DTO conversion happens via the feature's `presentation/mapper.ts` (`toDto`), which renames `owner_id`/`created_at` to camelCase and ISO-serializes dates. Keep this boundary: repositories return raw DB types; everything past the controller should see DTOs.
+
+**Kysely schema** lives in `src/infrastructure/db/schema.ts` as a typed `Database` interface. Add new tables here and extend `Database`. Migrations are TypeScript files in `migrations/` (see `0001_create_resources.ts` for the pattern). `kysely.config.ts` at the project root is consumed by `kysely-ctl` at CLI time and requires `DATABASE_URL` in the environment.
 
 **Migration filenames** use a UTC datetime prefix — `YYYYMMDD_HHMMSS_<description>.ts` — configured via `getMigrationPrefix` in `kysely.config.ts`. Create new migrations with `pnpm exec kysely migrate:make <description>`. Kysely sorts migrations lexicographically, so any zero-padded datetime prefix yields chronological order. The legacy `0001_create_resources.ts` still sorts before any datetime file, so the two formats coexist safely — do not retroactively rename it.
 
-**Kysely has no schema auto-diff.** Unlike Prisma Migrate, Drizzle Kit, TypeORM `schema:sync`, or Atlas, Kysely does not generate migrations from a model definition. The canonical workflow is hand-authored migrations as the source of truth, and — if needed — regenerating `src/db/schema.ts` from the live database via `kysely-codegen`. Treat `schema.ts` as generated output whenever you use codegen; do not hand-edit it in the same PR as a migration that changes its shape. See README §Database Migrations for the workflow.
+**Kysely has no schema auto-diff.** Unlike Prisma Migrate, Drizzle Kit, TypeORM `schema:sync`, or Atlas, Kysely does not generate migrations from a model definition. The canonical workflow is hand-authored migrations as the source of truth, and — if needed — regenerating `src/infrastructure/db/schema.ts` from the live database via `kysely-codegen`. Treat `schema.ts` as generated output whenever you use codegen; do not hand-edit it in the same PR as a migration that changes its shape. See README §Database Migrations for the workflow.
 
-**List/pagination** uses keyset (cursor) pagination, not offset. The cursor is an opaque string encoding `{ createdAt, id, sort }`; the service decodes it and hands a typed payload to the repository, which builds a composite `WHERE` predicate over `(sort_column, id)` to guarantee stable ordering across sort modes (see `repository.ts:applyCursorPredicate`). Preserve this pattern when adding sortable list endpoints.
+**List/pagination** uses keyset (cursor) pagination, not offset. The cursor is an opaque string encoding `{ createdAt, id, sort }`; the service decodes it and hands a typed payload to the repository, which builds a composite `WHERE` predicate over `(sort_column, id)` to guarantee stable ordering across sort modes (see `src/modules/resources/infrastructure/repository.ts:applyCursorPredicate`). Preserve this pattern when adding sortable list endpoints.
 
 **Config** is validated once at startup by `loadConfig()` in `src/config/env.ts` using Zod. On failure the process exits with a formatted error before the logger is even created. Add new env vars to the Zod schema, `.env.example`, and the README table together.
 
-**Graceful shutdown** is driven by `ShutdownManager` (`src/lib/shutdown.ts`). Register hooks in reverse-of-startup order in `index.ts` (HTTP server first, then DB pool). Shutdown is bounded by `SHUTDOWN_TIMEOUT_MS`.
+**Graceful shutdown** is driven by `ShutdownManager` (`src/shared/shutdown.ts`). Register hooks in reverse-of-startup order in `index.ts` (HTTP server first, then DB pool). Shutdown is bounded by `SHUTDOWN_TIMEOUT_MS`.
 
-**Health checks** use an extensible `HealthCheckRegistry` (`src/lib/health.ts`). Register checks in `index.ts` after creating each dependency. `GET /healthz?probe=liveness` is the fast path used by Docker healthchecks and should not hit dependencies.
+**Health checks** use an extensible `HealthCheckRegistry` (`src/shared/health.ts`). Register checks in `index.ts` after creating each dependency. `GET /healthz?probe=liveness` is the fast path used by Docker healthchecks and should not hit dependencies.
 
 ### Work Tracking — OpenSpec
 
@@ -99,7 +142,8 @@ The active roadmap is `s02` (resources CRUD, currently being implemented) throug
 ### Conventions Worth Preserving
 
 - **ESM `.js` import suffixes** in TypeScript source (e.g. `import { foo } from './bar.js'`) — the project emits native ESM and this is required.
-- **DI via factory functions**, not classes with static state. Routers take dependencies as arguments (`createResourcesRouter(db)`).
+- **DI via factory functions**, not classes with static state. Modules expose a single `create<Feature>Module(deps)` factory from `src/modules/<name>/index.ts` that returns `{ router }`; `src/http/app.ts` wires the module in with `app.use('/<feature>', module.router)`.
 - **Strict Zod schemas** (`.strict()`) on request bodies so unknown keys fail loudly.
 - **Body parser limit is 64 KB** — raising it requires reviewing the `VALIDATION` error path and the metadata size limits in `resources/schema.ts`.
 - **64 KB request / 16 KB metadata** size caps are enforced at the Zod layer, not at the DB. If you relax one, check both.
+- **Layer direction is lint-enforced.** `presentation → application → infrastructure` within each module; `src/shared/` and `src/infrastructure/` are terminal (they do not import from `src/modules/` or `src/http/`). A new ESLint rule will fail on a violation — see [`ARCHITECTURE.md`](./ARCHITECTURE.md) §Enforcement for the list.

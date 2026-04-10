@@ -1,7 +1,7 @@
 import type { ErrorRequestHandler } from 'express';
 import type pino from 'pino';
 
-import { AppError } from '../lib/errors.js';
+import { AppError } from '../shared/errors.js';
 
 export interface HttpError extends Error {
   status?: number;

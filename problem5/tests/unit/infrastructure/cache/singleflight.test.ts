@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { Singleflight } from '../../../src/cache/singleflight.js';
+import { Singleflight } from '../../../../src/infrastructure/cache/singleflight.js';
 
 describe('Singleflight', () => {
   it('coalesces N concurrent calls into a single fn invocation', async () => {

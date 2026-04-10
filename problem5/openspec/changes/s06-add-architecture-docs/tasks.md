@@ -2,7 +2,7 @@
 
 - [ ] 1.1 Create `Architecture.md` at the project root with a title, a one-paragraph overview of the service purpose, and a table of contents linking to each diagram section
 - [ ] 1.2 Write the **context diagram** (`mermaid` `graph LR`): nodes for `HTTP Client`, `k6 Benchmark Runner`, `Resources API`, `Postgres 16`, `Redis 7`; edges labelled with protocols and port numbers
-- [ ] 1.3 Write the **container diagram** (`mermaid` `graph TD`): show the internal decomposition — `Routes (src/modules/resources/router.ts)`, `Controller`, `ResourceService`, `ResourceRepository interface`, `PostgresResourceRepository`, `CachedResourceRepository`, `Redis Client (ioredis)`, `Kysely + pg.Pool`, `HealthCheckRegistry`, `ShutdownManager`; edges show dependency direction
+- [ ] 1.3 Write the **container diagram** (`mermaid` `graph TD`): show the internal decomposition — `Routes (src/modules/resources/presentation/router.ts)`, `Controller`, `ResourceService`, `ResourceRepository interface`, `PostgresResourceRepository`, `CachedResourceRepository`, `Redis Client (ioredis)`, `Kysely + pg.Pool`, `HealthCheckRegistry`, `ShutdownManager`; edges show dependency direction
 
 ## 2. Architecture.md — Request-Flow Sequences
 

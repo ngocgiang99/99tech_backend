@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import type { HealthCheckRegistry } from '../../lib/health.js';
+import type { HealthCheckRegistry } from '../../shared/health.js';
 
 export function createHealthRouter(registry: HealthCheckRegistry): Router {
   const router = Router();

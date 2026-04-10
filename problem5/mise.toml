@@ -40,7 +40,7 @@ run = "pnpm start"
 # --- Quality gates ---------------------------------------------------------
 
 [tasks.check]
-description = "Typecheck + lint (must pass before committing)"
+description = "Typecheck + lint + unit tests + integration tests (must pass before committing; integration tests require a running Docker daemon)"
 run = "pnpm check"
 
 [tasks.lint]

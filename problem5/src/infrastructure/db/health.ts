@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 
-import type { CheckResult } from '../lib/health.js';
+import type { CheckResult } from '../../shared/health.js';
 
 import type { Database } from './schema.js';
 

@@ -1,8 +1,8 @@
-import { NotFoundError } from '../../lib/errors.js';
-import type { Resource } from '../../db/schema.js';
+import { NotFoundError } from '../../../shared/errors.js';
+import type { Resource } from '../../../infrastructure/db/schema.js';
+import type { ResourceRepository, ListResult } from '../infrastructure/repository.js';
+import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery } from '../schema.js';
 
-import type { ResourceRepository, ListResult } from './repository.js';
-import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery } from './schema.js';
 import type { RequestContext } from './request-context.js';
 import { decodeCursor, encodeCursor } from './cursor.js';
 

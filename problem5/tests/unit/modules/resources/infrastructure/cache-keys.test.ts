@@ -6,8 +6,8 @@ import {
   listVersionKey,
   normalizeFilters,
   sha256Hex16,
-} from '../../../../src/modules/resources/cache-keys.js';
-import type { ListResourcesQuery } from '../../../../src/modules/resources/schema.js';
+} from '../../../../../src/modules/resources/infrastructure/cache-keys.js';
+import type { ListResourcesQuery } from '../../../../../src/modules/resources/schema.js';
 
 function buildFilters(overrides: Partial<ListResourcesQuery> = {}): ListResourcesQuery {
   return {

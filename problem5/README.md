@@ -133,7 +133,7 @@ reach for `mise run <task>` first.
 | `mise run install` | Install Node deps (`pnpm install --frozen-lockfile`) |
 | `mise run dev` | Start the API with live reload |
 | `mise run dev:pretty` | Same, but with pretty-printed logs (pino-pretty) |
-| `mise run check` | Typecheck + lint — **must pass before committing** |
+| `mise run check` | Typecheck + lint + unit tests + integration tests — **must pass before committing** (integration tests require a running Docker daemon) |
 | `mise run lint` / `format` / `build` | Individual quality gates |
 | `mise run start` | Run the compiled build (after `mise run build`) |
 | `mise run up` / `up:build` | Start the full Docker stack (optionally rebuilding) |
@@ -246,41 +246,30 @@ port bindings from a previous run: `docker ps -a` and remove orphans.
 
 ---
 
-## Project Structure
+## Architecture
+
+The `src/` tree is organized into layered directories that make the dependency direction visible at a glance:
 
 ```
 src/
-  config/
-    env.ts            # Zod-validated environment configuration
-  db/
-    client.ts         # Kysely + pg Pool factory
-    health.ts         # DB health check (SELECT 1 with 1s timeout)
-    schema.ts         # Kysely Database type definitions
-  http/
-    app.ts            # Express application factory
-    routes/
-      health.ts       # GET /healthz endpoint
-  lib/
-    errors.ts         # AppError taxonomy (ValidationError, NotFoundError, ConflictError)
-    health.ts         # HealthCheckRegistry
-    logger.ts         # Pino JSON logger
-    shutdown.ts       # Graceful shutdown manager
-  middleware/
-    error-handler.ts  # Central error handler (maps AppError → spec shape)
-    request-id.ts     # X-Request-Id propagation middleware
-  modules/
-    resources/
-      cursor.ts       # Keyset cursor encode/decode
-      controller.ts   # Express RequestHandler wrappers (Zod → service → HTTP)
-      repository.ts   # Kysely-backed ResourceRepository
-      router.ts       # Mounts 5 endpoints at /resources
-      schema.ts       # Zod schemas: Create/Update/List/Resource
-      service.ts      # Business logic (throws typed errors)
-  index.ts            # Process entry point
-migrations/
-  0001_create_resources.ts  # Creates resources table + 5 indexes
-kysely.config.ts      # kysely-ctl migration config
+  config/                     # Zod-validated env config
+  shared/                     # Cross-cutting primitives (errors, logger, health, shutdown)
+  infrastructure/             # Driver-level primitives (shared by all features)
+    db/                       # Kysely + pg.Pool + schema types
+    cache/                    # ioredis client + singleflight
+  http/                       # Express wiring + non-feature routes
+  middleware/                 # request-id, error-handler, x-cache
+  modules/resources/          # Feature module (presentation / application / infrastructure)
+    presentation/             # router, controller, mapper
+    application/              # service, cursor, request-context
+    infrastructure/           # repository, cached-repository, cache-keys
+    schema.ts                 # Zod schemas + inferred DTO types
+    index.ts                  # createResourcesModule factory
+  app.ts                      # createApp(deps) — DI entry point
+  index.ts                    # Process entry point
 ```
+
+Dependencies flow in one direction inside each module (`presentation → application → infrastructure`), enforced by ESLint `no-restricted-imports` rules. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full layering rules, dependency direction, and the decisions behind what this project explicitly does not do.
 
 ---
 

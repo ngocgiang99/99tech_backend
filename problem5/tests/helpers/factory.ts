@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { Resource } from '../../src/db/schema.js';
+import type { Resource } from '../../src/infrastructure/db/schema.js';
 import type { CreateResourceInput } from '../../src/modules/resources/schema.js';
 
 /**

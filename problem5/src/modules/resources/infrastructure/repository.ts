@@ -1,11 +1,10 @@
 import type { Kysely, SelectQueryBuilder } from 'kysely';
 import { sql } from 'kysely';
 
-import type { Database, Resource } from '../../db/schema.js';
-
-import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery, SortValue } from './schema.js';
-import type { CursorPayload } from './cursor.js';
-import type { RequestContext } from './request-context.js';
+import type { Database, Resource } from '../../../infrastructure/db/schema.js';
+import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery, SortValue } from '../schema.js';
+import type { CursorPayload } from '../application/cursor.js';
+import type { RequestContext } from '../application/request-context.js';
 
 export interface ListResult {
   data: Resource[];

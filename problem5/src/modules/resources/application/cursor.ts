@@ -1,6 +1,5 @@
-import { ValidationError } from '../../lib/errors.js';
-
-import type { SortValue } from './schema.js';
+import { ValidationError } from '../../../shared/errors.js';
+import type { SortValue } from '../schema.js';
 
 export interface CursorPayload {
   createdAt: string;
