@@ -5,8 +5,9 @@ import { Inject, Injectable } from '@nestjs/common';
 import { DATABASE, type Database } from '../../../../database';
 import { IdempotencyViolationError } from '../../../domain/errors/idempotency-violation.error';
 import { ScoreCredited } from '../../../domain/events/score-credited.event';
-import type { UserScoreRepository } from '../../../domain/ports/user-score.repository';
+import type { ScoreEventRecord, UserScoreRepository } from '../../../domain/ports/user-score.repository';
 import { UserScore } from '../../../domain/user-score.aggregate';
+import { ActionId } from '../../../domain/value-objects/action-id';
 import { UserId } from '../../../domain/value-objects/user-id';
 
 interface PgDatabaseError {
@@ -36,6 +37,36 @@ export class KyselyUserScoreRepository implements UserScoreRepository {
       updatedAt:
         row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at),
     });
+  }
+
+  async findScoreEventByActionId(actionId: ActionId): Promise<ScoreEventRecord | null> {
+    // v1 simplification (design.md Decision 4): totalScoreAfter reads the CURRENT
+    // user_scores.total_score, not the total at the time of the original credit.
+    // Post-credit drift is accepted for MVP — the replay path only needs an approximate score.
+    const row = await this.db
+      .selectFrom('score_events as se')
+      .innerJoin('user_scores as us', 'us.user_id', 'se.user_id')
+      .where('se.action_id', '=', actionId.value)
+      .select([
+        'se.action_id',
+        'se.user_id',
+        'se.delta',
+        'se.created_at',
+        'us.total_score',
+      ])
+      .executeTakeFirst();
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      actionId: row.action_id,
+      userId: row.user_id,
+      delta: row.delta,
+      totalScoreAfter: Number(row.total_score),
+      occurredAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
+    };
   }
 
   async credit(aggregate: UserScore, event: ScoreCredited): Promise<void> {
