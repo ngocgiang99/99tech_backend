@@ -1,0 +1,26 @@
+# Prometheus scrape config for the resources-api stack.
+#
+# Mounted read-only at /etc/prometheus/prometheus.yml by docker-compose.yml
+# under the `metrics` profile. Start with:
+#
+#     docker compose --profile metrics up -d
+#
+# Then point a browser at http://localhost:9090 and query `up` to confirm
+# the api target is scraping, or `rate(http_requests_total[1m])` for live
+# request rate.
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+  external_labels:
+    application: resources-api
+
+scrape_configs:
+  - job_name: resources-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - api:3000
+        labels:
+          service: resources-api
+          env: docker-compose

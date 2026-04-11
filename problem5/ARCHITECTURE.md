@@ -75,6 +75,14 @@ graph TD
         Singleflight["Singleflight<br/>cache/singleflight.ts"]
     end
 
+    subgraph obs["Observability (src/observability)"]
+        MetricsReg["MetricsRegistry<br/>metrics-registry.ts"]
+        HttpMetrics["HTTP middleware<br/>http-metrics.ts"]
+        DbMetricsLog["DB log callback<br/>db-metrics.ts"]
+        PoolGauge["Pool sampler<br/>db-pool-gauge.ts"]
+        MetricsRoute["/metrics route<br/>http/routes/metrics.ts"]
+    end
+
     subgraph platform["Cross-Cutting (src/shared)"]
         Health["HealthCheckRegistry<br/>health.ts"]
         Shutdown["ShutdownManager<br/>shutdown.ts"]
@@ -100,6 +108,15 @@ graph TD
     Health --> IORedis
     Controller --> Errors
     Service --> Errors
+
+    HttpMetrics --> MetricsReg
+    DbMetricsLog --> MetricsReg
+    PoolGauge --> MetricsReg
+    MetricsRoute --> MetricsReg
+    Controller --> MetricsReg
+    CachedRepo --> MetricsReg
+    Kysely -. log callback .-> DbMetricsLog
+    PoolGauge -. samples .-> Kysely
 ```
 
 The decomposition honors the layering rule **presentation → application → infrastructure** — each arrow points "inwards" (towards data), never the other way. The `CachedResourceRepository` is a decorator: it implements the same `ResourceRepository` interface as `PostgresResourceRepository` and delegates to it on miss, so the service is unaware of whether caching is enabled.
@@ -154,9 +171,37 @@ The `{sha256-16}` is the first 32 hex chars (128 bits) of `sha256(canonical-json
 
 The `v1` segment is a manual schema-version field. Bumping `v1` → `v2` in code makes every existing entry unreachable, useful when the serialized shape changes incompatibly.
 
+## Metrics
+
+The service exposes Prometheus metrics at `GET /metrics` (text exposition format). Instrumentation is wired at four layers by `src/observability/`, and every label value comes from a service-controlled allowlist so cardinality stays bounded by `routes × methods × status codes` regardless of user input.
+
+| Metric                              | Type      | Labels                         | Source                                                  |
+|-------------------------------------|-----------|--------------------------------|---------------------------------------------------------|
+| `http_request_duration_seconds`     | Histogram | `method`, `route`, `status_code` | `createHttpMetricsMiddleware` (res.on('finish'))        |
+| `http_requests_total`               | Counter   | `method`, `route`, `status_code` | same middleware                                         |
+| `cache_operations_total`            | Counter   | `operation`, `result`          | `CachedResourceRepository` (around every `tryGet`/`trySet`/`tryDel`/`bumpListVersion`) |
+| `cache_operation_duration_seconds`  | Histogram | `operation`                    | same decorator                                          |
+| `db_query_duration_seconds`         | Histogram | `operation`                    | Kysely `log` callback (`createDbMetricsLogger`)         |
+| `db_query_errors_total`             | Counter   | `operation`, `error_class`     | same log callback; pg SQLSTATE → named class, else `other` |
+| `db_pool_size`                      | Gauge     | `state`                        | `startDbPoolGauge` (5 s `setInterval`, `unref`'d)       |
+| `resources_operations_total`        | Counter   | `operation`, `outcome`         | `ResourceController` (`recordOutcome` + `classifyOutcome(err)`) |
+
+Label value sets:
+
+- `method` ∈ `GET|POST|PATCH|DELETE|PUT|HEAD|OPTIONS`
+- `route` is `req.route?.path` (e.g. `/resources/:id`), or the constant sentinel `__unmatched` — **never** `req.originalUrl`
+- `operation` (cache) ∈ `get|set|del|incr`; `result` ∈ `hit|miss|error`
+- `operation` (db) ∈ `select|insert|update|delete`; non-CRUD nodes (raw, with, DDL, transactions) skip recording
+- `error_class` (db) is an allowlist of translated pg SQLSTATEs: `unique_violation`, `not_null_violation`, `foreign_key_violation`, `check_violation`, `deadlock`, `serialization_failure`, `connection_failure`, `syntax_error`, `undefined_table`, `undefined_column`, `other`
+- `operation` (resources) ∈ `create|read|list|update|delete`; `outcome` ∈ `success|not_found|validation_error|error`
+
+**Design choice — Kysely `log` callback instead of `KyselyPlugin`.** The Kysely plugin interface does not call `transformResult` on errors (the Kysely docs explicitly warn about this), so error tracking from a plugin is unreliable. The `log` callback receives both `query` and `error` events with `queryDurationMillis` already computed by the driver — cleaner, no `WeakMap` bookkeeping, and the only path that captures both success AND error durations in one place. See `src/observability/db-metrics.ts`.
+
+**Kill switch.** `METRICS_ENABLED=false` short-circuits the whole instrumentation stack: the HTTP middleware is not installed, the `/metrics` route is not mounted, the Kysely log callback is not attached, and the pool sampler is replaced with a no-op. Instrumentation cost drops to zero for a comparison benchmark. See `README.md` §Observability for the PromQL cheat sheet and the production-exposure considerations.
+
 ## Deployment
 
-The default deployment is a single-host Docker Compose stack. Three long-lived services (`api`, `postgres`, `redis`) on a private bridge network, plus an optional `k6` sidecar gated behind the `bench` profile for benchmark runs.
+The default deployment is a single-host Docker Compose stack. Three long-lived services (`api`, `postgres`, `redis`) on a private bridge network, plus two optional sidecars gated behind compose profiles: `k6` (benchmark runner, `--profile bench`) and `prometheus` (metrics scraper, `--profile metrics`).
 
 ```mermaid
 graph LR
@@ -166,23 +211,29 @@ graph LR
             PG["postgres<br/>postgres:16-alpine:5432"]
             R["redis<br/>redis:7-alpine:6379"]
             K6["k6 (profile: bench)<br/>grafana/k6:latest"]
+            PROM["prometheus (profile: metrics)<br/>prom/prometheus:v2.54.1:9090"]
         end
         VolPg[("pg-data<br/>(named volume)")]
         VolR[("redis-data<br/>(named volume)")]
+        VolProm[("prometheus-data<br/>(named volume)")]
     end
 
     Host3000["host :3000"] -.-> API
     Host5432["host :5432"] -.-> PG
+    Host9090["host :9090"] -.-> PROM
 
     API -- "depends_on: healthy" --> PG
     API -- "depends_on: healthy" --> R
     K6 -- "depends_on: healthy" --> API
+    PROM -- "depends_on: healthy" --> API
+    PROM -. scrapes /metrics every 5s .-> API
 
     PG --- VolPg
     R --- VolR
+    PROM --- VolProm
 ```
 
-Healthchecks gate startup: `api` does not start until `postgres` and `redis` report healthy, and the `api` healthcheck (`GET /healthz?probe=liveness`) is what `k6` waits on. Only `api` (port 3000) and `postgres` (port 5432) are exposed to the host; Redis stays inside the network.
+Healthchecks gate startup: `api` does not start until `postgres` and `redis` report healthy, and the `api` healthcheck (`GET /healthz?probe=liveness`) is what `k6` and `prometheus` wait on. The default stack exposes only `api` (port 3000) and `postgres` (port 5432) to the host; Redis stays inside the network. When the `metrics` profile is active, Prometheus's UI is also exposed on host port 9090.
 
 ## Failure Modes
 

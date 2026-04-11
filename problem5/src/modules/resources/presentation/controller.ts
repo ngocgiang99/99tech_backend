@@ -1,7 +1,8 @@
 import type { RequestHandler } from 'express';
 import { ZodError } from 'zod';
 
-import { ValidationError } from '../../../shared/errors.js';
+import { NotFoundError, ValidationError } from '../../../shared/errors.js';
+import type { MetricsRegistry } from '../../../observability/metrics-registry.js';
 import type { ResourceService } from '../application/service.js';
 import { createRequestContext, type CacheStatus } from '../application/request-context.js';
 import {
@@ -22,6 +23,15 @@ function handleZodError(err: ZodError): ValidationError {
   return new ValidationError('Validation failed', details);
 }
 
+type ResourceOperation = 'create' | 'read' | 'list' | 'update' | 'delete';
+type ResourceOutcome = 'success' | 'not_found' | 'validation_error' | 'error';
+
+function classifyOutcome(err: unknown): Exclude<ResourceOutcome, 'success'> {
+  if (err instanceof NotFoundError) return 'not_found';
+  if (err instanceof ValidationError) return 'validation_error';
+  return 'error';
+}
+
 export interface ResourceController {
   create: RequestHandler;
   getById: RequestHandler;
@@ -37,12 +47,22 @@ export interface ResourceControllerOptions {
    * reports HIT/MISS through the request context.
    */
   cacheEnabled: boolean;
+  /**
+   * Optional metrics sink. When provided, every controller method
+   * increments `resources_operations_total{operation,outcome}` once per
+   * request, classified by error type. Optional so unit tests can omit it.
+   */
+  metrics?: MetricsRegistry;
 }
 
 export function createResourceController(
   service: ResourceService,
   options: ResourceControllerOptions,
 ): ResourceController {
+  const recordOutcome = (operation: ResourceOperation, outcome: ResourceOutcome): void => {
+    options.metrics?.resourcesOperationsTotal.inc({ operation, outcome });
+  };
+
   const markCacheStatus = (res: Parameters<RequestHandler>[1], status: CacheStatus): void => {
     res.locals['cacheStatus'] = status;
   };
@@ -55,7 +75,9 @@ export function createResourceController(
       }
       const resource = await service.create(parseResult.data);
       res.status(201).location(`/resources/${resource.id}`).json(toDto(resource));
+      recordOutcome('create', 'success');
     } catch (err) {
+      recordOutcome('create', classifyOutcome(err));
       next(err);
     }
   };
@@ -70,13 +92,16 @@ export function createResourceController(
         markCacheStatus(res, 'BYPASS');
         const resource = await service.getById(id);
         res.status(200).json(toDto(resource));
+        recordOutcome('read', 'success');
         return;
       }
       const ctx = createRequestContext();
       const resource = await service.getById(id, ctx);
       markCacheStatus(res, ctx.cacheStatus ?? 'MISS');
       res.status(200).json(toDto(resource));
+      recordOutcome('read', 'success');
     } catch (err) {
+      recordOutcome('read', classifyOutcome(err));
       next(err);
     }
   };
@@ -94,6 +119,7 @@ export function createResourceController(
           data: result.data.map(toDto),
           nextCursor: result.nextCursor,
         });
+        recordOutcome('list', 'success');
         return;
       }
       const ctx = createRequestContext();
@@ -103,7 +129,9 @@ export function createResourceController(
         data: result.data.map(toDto),
         nextCursor: result.nextCursor,
       });
+      recordOutcome('list', 'success');
     } catch (err) {
+      recordOutcome('list', classifyOutcome(err));
       next(err);
     }
   };
@@ -120,7 +148,9 @@ export function createResourceController(
       }
       const resource = await service.update(id, parseResult.data);
       res.status(200).json(toDto(resource));
+      recordOutcome('update', 'success');
     } catch (err) {
+      recordOutcome('update', classifyOutcome(err));
       next(err);
     }
   };
@@ -133,7 +163,9 @@ export function createResourceController(
       }
       await service.delete(id);
       res.status(204).send();
+      recordOutcome('delete', 'success');
     } catch (err) {
+      recordOutcome('delete', classifyOutcome(err));
       next(err);
     }
   };

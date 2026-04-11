@@ -1,4 +1,12 @@
-## ADDED Requirements
+# metrics-observability
+
+## Purpose
+
+Defines the contract for how the Resources API exposes Prometheus metrics: which metrics it publishes, what labels are allowed, how cardinality is controlled, and how the endpoint is exposed. The goal is that an operator can scrape the service, correlate what the load generator observes from the outside (see `performance-benchmarking`) with what the service observes from the inside, and answer "is it behaving correctly, right now, under real load?" without reading logs.
+
+The design leans on `prom-client` as the canonical Node.js Prometheus client and the industry baseline exposition format. Cardinality discipline is first-class: every label value the service emits comes from a service-controlled allowlist, so a careless label cannot turn a 50-metric registry into a 50,000-series registry. The `/metrics` endpoint sits on the main HTTP port (documented production guidance: bind to an internal interface or run on a separate port) and is gated behind a `METRICS_ENABLED` kill switch so instrumentation cost can be benchmarked in isolation.
+
+## Requirements
 
 ### Requirement: Metrics Endpoint
 
@@ -26,7 +34,7 @@ The service SHALL expose `GET /metrics` which returns Prometheus exposition-form
 
 ### Requirement: HTTP Request Duration Histogram
 
-The service SHALL record every inbound HTTP request as an observation in a `http_request_duration_seconds` histogram labeled by `method`, `route` (Express matched route pattern), and `status_code`.
+The service SHALL record every inbound HTTP request as an observation in a `http_request_duration_seconds` histogram labeled by `method`, `route` (Express matched route pattern, sub-router mount point prefix included), and `status_code`.
 
 #### Scenario: Successful GET on a matched route
 
@@ -62,7 +70,7 @@ The service SHALL increment `http_requests_total{method,route,status_code}` for 
 
 ### Requirement: Cache Operation Metrics
 
-The cached repository layer SHALL emit a counter `cache_operations_total{operation,result}` and a histogram `cache_operation_duration_seconds{operation}` for every interaction with Redis.
+The cached repository layer SHALL emit a counter `cache_operations_total{operation,result}` and a histogram `cache_operation_duration_seconds{operation}` for every interaction with Redis. The `operation` label is drawn from `{get, set, del, incr}` and the `result` label from `{hit, miss, error}`.
 
 #### Scenario: Successful cache hit on detail read
 
@@ -91,7 +99,7 @@ The cached repository layer SHALL emit a counter `cache_operations_total{operati
 
 ### Requirement: Database Metrics
 
-The data access layer SHALL emit `db_query_duration_seconds{operation}` histogram, `db_pool_size{state}` gauge, and `db_query_errors_total{operation,error_class}` counter.
+The data access layer SHALL emit `db_query_duration_seconds{operation}` histogram, `db_pool_size{state}` gauge, and `db_query_errors_total{operation,error_class}` counter. The `operation` label for query metrics is drawn from `{select, insert, update, delete}` (non-CRUD root operation nodes are skipped). The `state` label for the pool gauge is drawn from `{total, idle, waiting}`, which matches the three fields exposed by `pg.Pool` — there is no synthetic `active` state.
 
 #### Scenario: SELECT query records duration
 
@@ -99,12 +107,11 @@ The data access layer SHALL emit `db_query_duration_seconds{operation}` histogra
 - **THEN** `db_query_duration_seconds{operation="select"}` records one observation
 - **AND** the recorded value includes the full SQL round-trip including network time
 
-#### Scenario: Insert records duration and bumps pool usage
+#### Scenario: Insert records duration
 
 - **WHEN** the repository issues an INSERT (for `POST /resources`)
 - **THEN** `db_query_duration_seconds{operation="insert"}` records one observation
-- **AND** `db_pool_size{state="active"}` reflects the connection being held during the query
-- **AND** `db_pool_size{state="idle"}` returns to its previous value after the query completes
+- **AND** `db_pool_size` is a registered gauge with label values drawn from the `{total, idle, waiting}` allowlist, sampled every 5 seconds by a background collector
 
 #### Scenario: Database error is recorded
 
@@ -114,7 +121,7 @@ The data access layer SHALL emit `db_query_duration_seconds{operation}` histogra
 
 ### Requirement: Domain Metrics
 
-The service SHALL emit a counter `resources_operations_total{operation,outcome}` for every successful or failed CRUD operation at the domain layer.
+The service SHALL emit a counter `resources_operations_total{operation,outcome}` for every successful or failed CRUD operation at the domain layer. The `operation` label is drawn from `{create, read, list, update, delete}` and the `outcome` label from `{success, not_found, validation_error, error}`.
 
 #### Scenario: Successful create
 

@@ -19,6 +19,14 @@ const envSchema = z.object({
   CACHE_LIST_TTL_SECONDS: z.coerce.number().int().min(1).default(60),
   CACHE_LIST_VERSION_KEY_PREFIX: z.string().min(1).default('resource:list:version'),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(0).default(10000),
+  METRICS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  METRICS_DEFAULT_METRICS: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 });
 
 export type Config = z.infer<typeof envSchema>;

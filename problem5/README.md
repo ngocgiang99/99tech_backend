@@ -408,6 +408,8 @@ All variables are listed in `.env.example` with their defaults.
 | `CACHE_LIST_TTL_SECONDS`        | No       | `60`                                               | TTL for `GET /resources` list cache |
 | `CACHE_LIST_VERSION_KEY_PREFIX` | No       | `resource:list:version`                            | Redis key for list version counter  |
 | `SHUTDOWN_TIMEOUT_MS`           | No       | `10000`                                            | Max ms to drain before force-exit   |
+| `METRICS_ENABLED`               | No       | `true`                                             | Master toggle for Prometheus metrics. When `false`, `/metrics` is not mounted and the HTTP/cache/db instrumentation does nothing. |
+| `METRICS_DEFAULT_METRICS`       | No       | `true`                                             | Whether to collect `prom-client`'s default Node.js metrics (CPU, heap, event loop lag, GC). Disable for narrower `/metrics` output. |
 
 ### Database Migrations
 
@@ -500,3 +502,106 @@ itself is reachable.
 ```bash
 CACHE_ENABLED=false mise run dev
 ```
+
+---
+
+## Observability
+
+The service exposes Prometheus metrics at `GET /metrics` in text exposition
+format (`text/plain; version=0.0.4`). Metrics cover four layers:
+
+- **HTTP:** `http_request_duration_seconds` (histogram) and
+  `http_requests_total` (counter), labeled by `method`, `route` (Express
+  route pattern — `/resources/:id`, NOT the raw URL), and `status_code`.
+- **Cache:** `cache_operations_total{operation,result}` and
+  `cache_operation_duration_seconds{operation}` — `operation` ∈
+  `get|set|del|incr`, `result` ∈ `hit|miss|error`.
+- **Database:** `db_query_duration_seconds{operation}`,
+  `db_query_errors_total{operation,error_class}`, and `db_pool_size{state}`
+  (sampled every 5 s). `operation` ∈ `select|insert|update|delete`;
+  `error_class` is a bounded allowlist (Postgres SQLSTATE → named class;
+  anything not listed collapses to `other`).
+- **Domain:** `resources_operations_total{operation,outcome}` — `operation`
+  ∈ `create|read|list|update|delete`, `outcome` ∈
+  `success|not_found|validation_error|error`.
+
+All label values come from service-controlled allowlists; no user input
+(URL path, header, error message) ever becomes a label value directly.
+This is what keeps the metrics cardinality bounded at `routes × methods ×
+status codes` regardless of how many distinct UUIDs the API sees at
+runtime — one of the cardinality tests in the integration suite
+explicitly fires 25 requests with different UUIDs and asserts the
+resulting `route` set stays under 10.
+
+### Toggling metrics
+
+```bash
+# Default: metrics enabled, including prom-client's Node.js defaults.
+mise run dev
+
+# Skip Node.js defaults for narrower output (still emits custom metrics).
+METRICS_DEFAULT_METRICS=false mise run dev
+
+# Kill switch: /metrics is not mounted; instrumentation is a no-op.
+METRICS_ENABLED=false mise run dev
+```
+
+### Running Prometheus locally
+
+Docker Compose ships a `metrics` profile that brings up a pinned
+`prom/prometheus:v2.54.1` container scraping `http://api:3000/metrics`
+every 5 s. Scrape history is kept in a named volume so it survives
+`down` / `up` cycles. Wipe with `docker compose down -v`.
+
+```bash
+# Bring up api + postgres + redis + prometheus
+docker compose --profile metrics up -d
+
+# Open the Prometheus UI
+open http://localhost:9090
+
+# Inside the UI, try these queries:
+#   up{job="resources-api"}                              — target health
+#   rate(http_requests_total[1m])                        — RPS by route
+#   histogram_quantile(0.99, sum by (le, route)         — p99 per route
+#     (rate(http_request_duration_seconds_bucket[5m])))
+#   sum(rate(cache_operations_total{result="hit"}[1m])) — cache hit/s
+#     / sum(rate(cache_operations_total{operation="get"}[1m]))
+```
+
+The scrape config at `deploy/prometheus/prometheus.yml` is deliberately
+minimal — one job, no recording rules, no alerts. Extend it in a follow-up
+change when specific SLOs are worth codifying.
+
+### PromQL cheat sheet
+
+| Question                                    | Query                                                                                                               |
+|---------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| Request rate per route (last 1 m)           | `sum by (route) (rate(http_requests_total[1m]))`                                                                    |
+| p99 latency per route (last 5 m)            | `histogram_quantile(0.99, sum by (le, route) (rate(http_request_duration_seconds_bucket[5m])))`                     |
+| Error rate (5xx) per route                  | `sum by (route) (rate(http_requests_total{status_code=~"5.."}[1m]))`                                                |
+| Cache hit rate (last 1 m)                   | `sum(rate(cache_operations_total{operation="get",result="hit"}[1m])) / sum(rate(cache_operations_total{operation="get"}[1m]))` |
+| DB pool utilization                         | `db_pool_size{state="idle"} / db_pool_size{state="total"}`                                                          |
+
+### Production considerations
+
+On a public internet deployment, `/metrics` should NOT be reachable from
+untrusted networks — it exposes internal request volumes, route names,
+and database error classes that are useful to an attacker doing recon.
+Options, in order of preference:
+
+1. **Separate port.** Run a second Express listener on an internal-only
+   port (e.g. `9091`) that only hosts the metrics router, firewall the
+   main port. Cleanest in production, skipped here because a
+   local-dev-first brief doesn't need it.
+2. **Interface binding.** Bind `/metrics` to `127.0.0.1` or an internal
+   interface at the process level. Requires a reverse proxy in front.
+3. **Reverse proxy ACL.** Let nginx/Envoy/Caddy strip the `/metrics`
+   path from public traffic and allow it only from the scraper's
+   network.
+
+`METRICS_ENABLED=false` is the nuclear option: it short-circuits
+instrumentation entirely (zero overhead), which is useful for a
+head-to-head benchmark of "how much does Prometheus cost me?". The
+`Benchmark.md` cold/warm comparison was run with metrics off; an
+S07-follow-up comparison run would make the answer explicit.

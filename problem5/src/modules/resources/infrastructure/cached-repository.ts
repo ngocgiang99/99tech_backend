@@ -3,6 +3,7 @@ import type pino from 'pino';
 
 import type { Resource } from '../../../infrastructure/db/schema.js';
 import { Singleflight } from '../../../infrastructure/cache/singleflight.js';
+import type { MetricsRegistry } from '../../../observability/metrics-registry.js';
 import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery } from '../schema.js';
 import type { RequestContext } from '../application/request-context.js';
 
@@ -16,6 +17,13 @@ export interface CachedRepositoryOptions {
   detailTtlSeconds: number;
   listTtlSeconds: number;
   listVersionKeyPrefix: string;
+  /**
+   * Optional metrics sink. When provided, every Redis operation increments
+   * `cache_operations_total{operation,result}` and observes
+   * `cache_operation_duration_seconds{operation}`. Optional so unit tests
+   * can omit it; production wires it in via `createResourcesModule`.
+   */
+  metrics?: MetricsRegistry;
 }
 
 interface SerializedListEntry {
@@ -64,6 +72,7 @@ export class CachedResourceRepository implements ResourceRepository {
   private readonly detailTtlSeconds: number;
   private readonly listTtlSeconds: number;
   private readonly listVersionKeyPrefix: string;
+  private readonly metrics: MetricsRegistry | undefined;
   private readonly detailSingleflight = new Singleflight<Resource | null>();
   private readonly listSingleflight = new Singleflight<ListResult>();
 
@@ -74,6 +83,7 @@ export class CachedResourceRepository implements ResourceRepository {
     this.detailTtlSeconds = opts.detailTtlSeconds;
     this.listTtlSeconds = opts.listTtlSeconds;
     this.listVersionKeyPrefix = opts.listVersionKeyPrefix;
+    this.metrics = opts.metrics;
   }
 
   async create(input: CreateResourceInput, ctx?: RequestContext): Promise<Resource> {
@@ -163,48 +173,79 @@ export class CachedResourceRepository implements ResourceRepository {
    * or `undefined` on miss or Redis failure.
    */
   private async tryGet(key: string): Promise<string | null | undefined> {
+    const endTimer = this.metrics?.cacheOperationDurationSeconds.startTimer({ operation: 'get' });
     try {
       const value = await this.redis.get(key);
-      if (value === null) return undefined;
+      endTimer?.();
+      if (value === null) {
+        this.metrics?.cacheOperationsTotal.inc({ operation: 'get', result: 'miss' });
+        return undefined;
+      }
+      this.metrics?.cacheOperationsTotal.inc({ operation: 'get', result: 'hit' });
       return value;
     } catch (err) {
+      endTimer?.();
+      this.metrics?.cacheOperationsTotal.inc({ operation: 'get', result: 'error' });
       this.logger.warn({ err: String(err), key }, 'cache GET failed');
       return undefined;
     }
   }
 
   private async trySet(key: string, value: string, ttlSeconds: number): Promise<void> {
+    const endTimer = this.metrics?.cacheOperationDurationSeconds.startTimer({ operation: 'set' });
     try {
       await this.redis.set(key, value, 'EX', ttlSeconds);
+      endTimer?.();
+      this.metrics?.cacheOperationsTotal.inc({ operation: 'set', result: 'hit' });
     } catch (err) {
+      endTimer?.();
+      this.metrics?.cacheOperationsTotal.inc({ operation: 'set', result: 'error' });
       this.logger.warn({ err: String(err), key }, 'cache SET failed');
     }
   }
 
   private async tryDel(key: string): Promise<void> {
+    const endTimer = this.metrics?.cacheOperationDurationSeconds.startTimer({ operation: 'del' });
     try {
       await this.redis.del(key);
+      endTimer?.();
+      this.metrics?.cacheOperationsTotal.inc({ operation: 'del', result: 'hit' });
     } catch (err) {
+      endTimer?.();
+      this.metrics?.cacheOperationsTotal.inc({ operation: 'del', result: 'error' });
       this.logger.warn({ err: String(err), key }, 'cache DEL failed');
     }
   }
 
   private async readListVersion(): Promise<number> {
+    const endTimer = this.metrics?.cacheOperationDurationSeconds.startTimer({ operation: 'get' });
     try {
       const raw = await this.redis.get(listVersionKey(this.listVersionKeyPrefix));
-      if (raw === null) return 1;
+      endTimer?.();
+      if (raw === null) {
+        this.metrics?.cacheOperationsTotal.inc({ operation: 'get', result: 'miss' });
+        return 1;
+      }
+      this.metrics?.cacheOperationsTotal.inc({ operation: 'get', result: 'hit' });
       const n = Number(raw);
       return Number.isFinite(n) ? n : 1;
     } catch (err) {
+      endTimer?.();
+      this.metrics?.cacheOperationsTotal.inc({ operation: 'get', result: 'error' });
       this.logger.warn({ err: String(err) }, 'cache list-version GET failed');
       return 1;
     }
   }
 
   private async bumpListVersion(): Promise<void> {
+    const endTimer = this.metrics?.cacheOperationDurationSeconds.startTimer({ operation: 'incr' });
     try {
       await this.redis.incr(listVersionKey(this.listVersionKeyPrefix));
+      endTimer?.();
+      this.metrics?.cacheOperationsTotal.inc({ operation: 'incr', result: 'hit' });
     } catch (err) {
+      endTimer?.();
+      this.metrics?.cacheOperationsTotal.inc({ operation: 'incr', result: 'error' });
       this.logger.warn({ err: String(err) }, 'cache list-version INCR failed');
     }
   }

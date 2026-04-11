@@ -113,9 +113,14 @@ module.exports = {
       },
     },
 
-    // ── Rule 5: src/infrastructure/** and src/shared/** cannot import from src/modules/** or src/http/** ──
+    // ── Rule 5: src/infrastructure/**, src/shared/**, and src/observability/** ──
+    // Terminal layers — cannot import from src/modules/** or src/http/**.
     {
-      files: ['src/infrastructure/**/*.ts', 'src/shared/**/*.ts'],
+      files: [
+        'src/infrastructure/**/*.ts',
+        'src/shared/**/*.ts',
+        'src/observability/**/*.ts',
+      ],
       rules: {
         'no-restricted-imports': [
           'error',

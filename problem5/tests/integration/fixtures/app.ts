@@ -4,12 +4,15 @@ import supertest from 'supertest';
 import { loadConfig } from '../../../src/config/env.js';
 import { createDb } from '../../../src/infrastructure/db/client.js';
 import { createRedis } from '../../../src/infrastructure/cache/client.js';
+import { MetricsRegistry } from '../../../src/observability/metrics-registry.js';
+import { createDbMetricsLogger } from '../../../src/observability/db-metrics.js';
 import { createApp } from '../../../src/app.js';
 import type { Deps } from '../../../src/app.js';
 
 export interface TestAppContext {
   request: ReturnType<typeof supertest>;
   deps: Deps;
+  metrics: MetricsRegistry;
   close: () => Promise<void>;
 }
 
@@ -18,6 +21,11 @@ export interface TestAppContext {
  * via DATABASE_URL / REDIS_URL set by the global setup. Returns a
  * supertest agent ready for HTTP assertions plus a close hook tests
  * should call in `afterAll`.
+ *
+ * Every test app has its own `MetricsRegistry` instance, and the Kysely
+ * log callback is wired to record db query metrics. This makes the
+ * registry available for assertions (e.g. cache counter checks) while
+ * keeping each test's metric state isolated from the others.
  */
 export async function createTestApp(
   envOverrides: Record<string, string> = {},
@@ -27,9 +35,15 @@ export async function createTestApp(
   const config = loadConfig();
   const logger = pino({ level: 'silent' });
 
+  // Construct a fresh registry per test app. Default Node.js metrics are
+  // disabled here because they add noise to assertions and some (event
+  // loop lag) emit per-interval regardless of test pace.
+  const metrics = new MetricsRegistry({ collectDefaults: false });
+
   const { db, pool } = createDb({
     connectionString: config.DATABASE_URL,
     maxConnections: config.DB_POOL_MAX,
+    log: createDbMetricsLogger(metrics),
   });
   const redis = createRedis({ url: config.REDIS_URL });
 
@@ -53,7 +67,7 @@ export async function createTestApp(
     });
   }
 
-  const deps: Deps = { config, logger, db, redis };
+  const deps: Deps = { config, logger, db, redis, metrics };
   const { app } = createApp(deps);
 
   const close = async (): Promise<void> => {
@@ -63,7 +77,8 @@ export async function createTestApp(
       redis.disconnect();
     }
     await pool.end();
+    metrics.clear();
   };
 
-  return { request: supertest(app), deps, close };
+  return { request: supertest(app), deps, metrics, close };
 }

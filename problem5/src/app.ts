@@ -8,6 +8,7 @@ import type { Database } from './infrastructure/db/schema.js';
 import { HealthCheckRegistry } from './shared/health.js';
 import { dbHealthCheck } from './infrastructure/db/health.js';
 import { cacheHealthCheck } from './infrastructure/cache/health.js';
+import type { MetricsRegistry } from './observability/metrics-registry.js';
 import { buildApp } from './http/app.js';
 
 export interface Deps {
@@ -15,6 +16,14 @@ export interface Deps {
   logger: pino.Logger;
   db: Kysely<Database>;
   redis: Redis;
+  /**
+   * Optional Prometheus metrics sink. When omitted (e.g. in unit tests that
+   * don't care about telemetry) the HTTP middleware and `/metrics` route
+   * are not mounted, the cache layer skips emitting counters, and the
+   * controller skips outcome tracking. The decision is wired through
+   * `MetricsWiring.enabled` based on `config.METRICS_ENABLED`.
+   */
+  metrics?: MetricsRegistry;
 }
 
 export interface AppBundle {
@@ -30,20 +39,26 @@ export interface AppBundle {
  * clients. No module-level side effects live here.
  */
 export function createApp(deps: Deps): AppBundle {
-  const { config, logger, db, redis } = deps;
+  const { config, logger, db, redis, metrics } = deps;
 
   const healthRegistry = new HealthCheckRegistry();
   healthRegistry.register('db', dbHealthCheck(db));
   healthRegistry.register('cache', cacheHealthCheck(redis));
 
-  const app = buildApp(logger, healthRegistry, db, {
-    redis,
-    cacheEnabled: config.CACHE_ENABLED,
-    detailTtlSeconds: config.CACHE_DETAIL_TTL_SECONDS,
-    listTtlSeconds: config.CACHE_LIST_TTL_SECONDS,
-    listVersionKeyPrefix: config.CACHE_LIST_VERSION_KEY_PREFIX,
-    nodeEnv: config.NODE_ENV,
-  });
+  const app = buildApp(
+    logger,
+    healthRegistry,
+    db,
+    {
+      redis,
+      cacheEnabled: config.CACHE_ENABLED,
+      detailTtlSeconds: config.CACHE_DETAIL_TTL_SECONDS,
+      listTtlSeconds: config.CACHE_LIST_TTL_SECONDS,
+      listVersionKeyPrefix: config.CACHE_LIST_VERSION_KEY_PREFIX,
+      nodeEnv: config.NODE_ENV,
+    },
+    metrics && config.METRICS_ENABLED ? { metrics, enabled: true } : undefined,
+  );
 
   return { app, healthRegistry };
 }
