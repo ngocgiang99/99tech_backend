@@ -1,8 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { FastifyRequest } from 'fastify';
-
-import { buildErrorMetadata, wrapUnknown } from '../errors';
+import { buildBackgroundErrorMetadata, wrapUnknown } from '../errors';
 
 export type LogLevel = 'warn' | 'error' | 'fatal';
 
@@ -19,17 +17,14 @@ export function logWithMetadata(
   context: Record<string, unknown> = {},
 ): void {
   const source =
-    typeof context['source'] === 'string' ? context['source'] : '__background';
-  const syntheticRequest = {
-    requestId: null,
-    method: 'BACKGROUND',
-    routeOptions: { url: source },
-    url: '',
-    headers: {},
-  } as unknown as FastifyRequest & { requestId?: string };
+    typeof context['source'] === 'string' ? context['source'] : undefined;
 
   const appErr = wrapUnknown(err);
-  const metadata = buildErrorMetadata(appErr, syntheticRequest, randomUUID());
+  const metadata = buildBackgroundErrorMetadata(
+    appErr,
+    { source },
+    randomUUID(),
+  );
 
   const emit =
     level === 'fatal' && typeof logger.fatal !== 'function'

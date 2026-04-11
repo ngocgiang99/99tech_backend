@@ -46,6 +46,14 @@ export default tseslint.config(
         { type: 'interface', pattern: 'src/scoreboard/interface/**' },
         { type: 'shared', pattern: 'src/shared/**' },
       ],
+      // Required for eslint-plugin-boundaries to resolve TypeScript imports
+      // (otherwise the rule silently passes because imports resolve to "unknown")
+      'import/resolver': {
+        typescript: {
+          alwaysTryTypes: true,
+          project: './tsconfig.json',
+        },
+      },
     },
     rules: {
       // Inter-element dependency rules (hexagonal layer enforcement)
@@ -79,14 +87,16 @@ export default tseslint.config(
               { to: { origin: 'core' } },
             ],
           },
-          // interface: may import from application and shared; external/core ok
+          // interface: may import from application, domain, and shared; external/core ok
           {
             from: { type: 'interface' },
             allow: [
-              { to: { type: ['application', 'shared'] } },
+              { to: { type: ['application', 'domain', 'shared'] } },
               { to: { origin: 'external' } },
               { to: { origin: 'core' } },
             ],
+            disallow: [{ to: { type: 'infrastructure' } }],
+            message: 'Interface layer cannot import from infrastructure. Define a port in domain/ports/ and inject it.',
           },
           // shared: may import from other shared; external/core ok
           {

@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Counter } from 'prom-client';
 
 import { METRIC_SCORE_INCREMENT_TOTAL } from '../../../shared/metrics';
+import { IdempotencyViolationError } from '../../domain/errors/idempotency-violation.error';
 import type { LeaderboardCache } from '../../domain/ports/leaderboard-cache';
 import type {
   OutboxRow,
@@ -9,18 +10,28 @@ import type {
 } from '../../domain/ports/user-score.repository';
 import { Score } from '../../domain/value-objects/score';
 import { UserScore } from '../../domain/user-score.aggregate';
+import { InternalError } from '../../shared/errors';
 
 import { IncrementScoreCommand } from './increment-score.command';
 
 export const USER_SCORE_REPOSITORY = 'UserScoreRepository';
 export const LEADERBOARD_CACHE = 'LeaderboardCache';
 
-export interface IncrementScoreResult {
-  userId: string;
-  newScore: number;
-  rank: number | null;
-  topChanged: boolean | null;
-}
+export type IncrementScoreResult =
+  | {
+      kind: 'committed';
+      userId: string;
+      newScore: number;
+      rank: number | null;
+      topChanged: boolean | null;
+    }
+  | {
+      kind: 'idempotent-replay';
+      userId: string;
+      newScore: number;
+      rank: null;
+      topChanged: null;
+    };
 
 @Injectable()
 export class IncrementScoreHandler {
@@ -66,7 +77,28 @@ export class IncrementScoreHandler {
       },
     ];
 
-    await this.repo.credit(aggregate, events[0], outboxRows);
+    try {
+      await this.repo.credit(aggregate, events[0], outboxRows);
+    } catch (err) {
+      if (err instanceof IdempotencyViolationError) {
+        const prior = await this.repo.findScoreEventByActionId(cmd.actionId);
+        if (!prior) {
+          throw new InternalError(
+            'Prior credit record not found for idempotent replay',
+            { cause: err },
+          );
+        }
+        this.scoreIncrementTotal.inc({ result: 'idempotent' });
+        return {
+          kind: 'idempotent-replay',
+          userId: prior.userId,
+          newScore: prior.totalScoreAfter,
+          rank: null,
+          topChanged: null,
+        };
+      }
+      throw err;
+    }
 
     this.scoreIncrementTotal.inc({ result: 'committed' });
 
@@ -90,10 +122,10 @@ export class IncrementScoreHandler {
         },
         'leaderboard cache update failed, returning null rank/topChanged',
       );
-      // rank and topChanged remain null
     }
 
     return {
+      kind: 'committed',
       userId: cmd.userId.value,
       newScore: aggregate.totalScore,
       rank,

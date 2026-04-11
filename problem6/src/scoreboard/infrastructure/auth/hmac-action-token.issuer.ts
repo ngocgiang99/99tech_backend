@@ -2,9 +2,13 @@ import { Injectable } from '@nestjs/common';
 import * as jose from 'jose';
 
 import { ConfigService } from '../../../config';
+import type {
+  ActionTokenIssuer,
+  IssuedActionToken,
+} from '../../domain/ports/action-token-issuer.port';
 
 @Injectable()
-export class HmacActionTokenIssuer {
+export class HmacActionTokenIssuer implements ActionTokenIssuer {
   private readonly secretKey: Uint8Array;
 
   constructor(private readonly config: ConfigService) {
@@ -13,12 +17,11 @@ export class HmacActionTokenIssuer {
     );
   }
 
-  async issue(input: { sub: string; atp: string; mxd: number }): Promise<{
-    actionId: string;
-    actionToken: string;
-    expiresAt: Date;
-    maxDelta: number;
-  }> {
+  async issue(input: {
+    sub: string;
+    atp: string;
+    mxd: number;
+  }): Promise<IssuedActionToken> {
     const actionId = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
     const ttl = this.config.get('ACTION_TOKEN_TTL_SECONDS');

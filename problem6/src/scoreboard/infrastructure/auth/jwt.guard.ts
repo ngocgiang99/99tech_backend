@@ -1,9 +1,20 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import type { FastifyRequest } from 'fastify';
 import * as jose from 'jose';
 import { trace, SpanStatusCode } from '@opentelemetry/api';
 
 import { ConfigService } from '../../../config';
 import { UnauthenticatedError } from '../../shared/errors';
+
+/**
+ * Local contract: JwtGuard attaches `userId` to the Fastify request. The
+ * `interface` layer re-exposes this as `AuthenticatedRequest` via
+ * `src/scoreboard/interface/http/authenticated-request.ts`. Keeping the
+ * attachment contract local here (rather than importing the interface type)
+ * preserves the hexagonal layering — `infrastructure` never reaches up into
+ * `interface`.
+ */
+type JwtAttachedRequest = FastifyRequest & { userId?: string };
 
 // TODO: add INTERNAL_JWT_SECRET_PREV before production release — see archived change replace-jwks-with-internal-hs256 design.md Decision 1
 
@@ -19,12 +30,9 @@ export class JwtGuard implements CanActivate {
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     try {
-      const request = ctx.switchToHttp().getRequest<Record<string, unknown>>();
-      const authHeader = request['headers'] as
-        | Record<string, string>
-        | undefined;
-      const authorization =
-        authHeader?.['authorization'] ?? authHeader?.['Authorization'];
+      const request = ctx.switchToHttp().getRequest<JwtAttachedRequest>();
+      const headers = request.headers;
+      const authorization = headers.authorization;
 
       if (!authorization) {
         throw new UnauthenticatedError('Unauthorized');
@@ -75,7 +83,7 @@ export class JwtGuard implements CanActivate {
         },
       );
 
-      request['userId'] = payload.sub;
+      request.userId = payload.sub;
       return true;
     } catch (err) {
       if (err instanceof UnauthenticatedError) throw err;

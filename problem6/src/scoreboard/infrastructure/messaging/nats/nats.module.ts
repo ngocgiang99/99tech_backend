@@ -9,11 +9,14 @@ import {
 import type { NatsConnection } from 'nats';
 
 import { ConfigModule, ConfigService } from '../../../../config';
-import { DOMAIN_EVENT_PUBLISHER } from '../../../domain';
+import {
+  DOMAIN_EVENT_PUBLISHER,
+  LEADERBOARD_UPDATES_PORT,
+} from '../../../domain';
 
 import { JetStreamEventPublisher } from './jetstream.event-publisher';
 import { JetStreamSubscriber } from './jetstream.subscriber';
-import { LeaderboardUpdatesEmitter } from './leaderboard-updates.emitter';
+import { LeaderboardUpdatesInProcessAdapter } from './leaderboard-updates.emitter';
 import { buildNatsClient } from './nats.client';
 import { StreamBootstrap } from './stream-bootstrap';
 
@@ -31,6 +34,11 @@ const domainEventPublisherProvider: Provider = {
   useClass: JetStreamEventPublisher,
 };
 
+const leaderboardUpdatesPortProvider: Provider = {
+  provide: LEADERBOARD_UPDATES_PORT,
+  useExisting: LeaderboardUpdatesInProcessAdapter,
+};
+
 @Global()
 @Module({
   imports: [ConfigModule],
@@ -39,7 +47,8 @@ const domainEventPublisherProvider: Provider = {
     StreamBootstrap,
     JetStreamEventPublisher,
     domainEventPublisherProvider,
-    LeaderboardUpdatesEmitter,
+    LeaderboardUpdatesInProcessAdapter,
+    leaderboardUpdatesPortProvider,
     JetStreamSubscriber,
   ],
   exports: [
@@ -47,7 +56,8 @@ const domainEventPublisherProvider: Provider = {
     StreamBootstrap,
     JetStreamEventPublisher,
     DOMAIN_EVENT_PUBLISHER,
-    LeaderboardUpdatesEmitter,
+    LeaderboardUpdatesInProcessAdapter,
+    LEADERBOARD_UPDATES_PORT,
     JetStreamSubscriber,
   ],
 })

@@ -8,12 +8,10 @@ import {
 import { AckPolicy, DeliverPolicy, JSONCodec } from 'nats';
 import type { Consumer, ConsumerMessages, NatsConnection } from 'nats';
 
+import type { LeaderboardUpdateEvent } from '../../../domain/ports/leaderboard-updates.port';
 import { ReadinessService } from '../../../../shared/readiness/readiness.service';
 
-import {
-  LeaderboardUpdateEvent,
-  LeaderboardUpdatesEmitter,
-} from './leaderboard-updates.emitter';
+import { LeaderboardUpdatesInProcessAdapter } from './leaderboard-updates.emitter';
 
 @Injectable()
 export class JetStreamSubscriber
@@ -30,7 +28,7 @@ export class JetStreamSubscriber
 
   constructor(
     @Inject('Nats') private readonly nats: NatsConnection,
-    private readonly emitter: LeaderboardUpdatesEmitter,
+    private readonly updates: LeaderboardUpdatesInProcessAdapter,
     private readonly readiness: ReadinessService,
   ) {}
 
@@ -79,7 +77,7 @@ export class JetStreamSubscriber
 
         try {
           const event = this.codec.decode(msg.data);
-          this.emitter.emit(event);
+          this.updates.emit(event);
           msg.ack();
         } catch (e) {
           this.logger.error(

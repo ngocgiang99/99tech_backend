@@ -6,7 +6,7 @@
  * Strategy:
  *   1. Boot all three containers
  *   2. Instantiate OutboxPublisherService with a REAL JetStreamEventPublisher (no mocks)
- *   3. Instantiate JetStreamSubscriber that forwards messages to LeaderboardUpdatesEmitter
+ *   3. Instantiate JetStreamSubscriber that forwards messages to LeaderboardUpdatesInProcessAdapter
  *   4. Subscribe to the emitter BEFORE inserting the outbox row
  *   5. Insert a `scoreboard.leaderboard.updated` row directly into outbox_events
  *   6. Wait (with retry+timeout ~5s) for published_at IS NOT NULL on that row
@@ -30,10 +30,8 @@ import {
 import { OutboxPublisherService } from '../../../src/scoreboard/infrastructure/outbox/outbox.publisher.service';
 import { JetStreamEventPublisher } from '../../../src/scoreboard/infrastructure/messaging/nats/jetstream.event-publisher';
 import { JetStreamSubscriber } from '../../../src/scoreboard/infrastructure/messaging/nats/jetstream.subscriber';
-import {
-  LeaderboardUpdatesEmitter,
-  type LeaderboardUpdateEvent,
-} from '../../../src/scoreboard/infrastructure/messaging/nats/leaderboard-updates.emitter';
+import { LeaderboardUpdatesInProcessAdapter } from '../../../src/scoreboard/infrastructure/messaging/nats/leaderboard-updates.emitter';
+import type { LeaderboardUpdateEvent } from '../../../src/scoreboard/domain/ports/leaderboard-updates.port';
 import { ReadinessService } from '../../../src/shared/readiness/readiness.service';
 import { ConfigService } from '../../../src/config';
 import { EnvSchema } from '../../../src/config/schema';
@@ -116,7 +114,7 @@ describe('End-to-end pipeline: outbox → JetStream → emitter', () => {
   let subscriberNc: NatsConnection;
 
   let publisher: JetStreamEventPublisher;
-  let emitter: LeaderboardUpdatesEmitter;
+  let emitter: LeaderboardUpdatesInProcessAdapter;
   let readiness: ReadinessService;
   let subscriber: JetStreamSubscriber;
   let outboxService: OutboxPublisherService;
@@ -138,7 +136,7 @@ describe('End-to-end pipeline: outbox → JetStream → emitter', () => {
     publisher = new JetStreamEventPublisher(nc);
 
     const eventEmitter = new EventEmitter2();
-    emitter = new LeaderboardUpdatesEmitter(eventEmitter);
+    emitter = new LeaderboardUpdatesInProcessAdapter(eventEmitter);
     readiness = new ReadinessService();
     subscriber = new JetStreamSubscriber(subscriberNc, emitter, readiness);
     await subscriber.onApplicationBootstrap();

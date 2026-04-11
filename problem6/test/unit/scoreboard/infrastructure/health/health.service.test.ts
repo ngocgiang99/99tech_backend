@@ -11,7 +11,7 @@ jest.mock('kysely', () => ({
   ),
 }));
 
-import { HealthService } from '../../../../../src/scoreboard/interface/health/health.service';
+import { HealthService } from '../../../../../src/scoreboard/infrastructure/health/health.service';
 import { ReadinessService } from '../../../../../src/shared/readiness/readiness.service';
 
 // ---------------------------------------------------------------------------

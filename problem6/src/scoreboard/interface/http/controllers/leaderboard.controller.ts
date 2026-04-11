@@ -1,9 +1,9 @@
-import { Controller, Get, Inject, Query, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 
-import { DATABASE } from '../../../../database';
-import type { Database } from '../../../../database';
-import type { LeaderboardCache } from '../../../domain/ports/leaderboard-cache';
+import { GetLeaderboardTopHandler } from '../../../application/queries';
+import type { TopEntry } from '../../../domain/ports/user-score.repository';
+// eslint-disable-next-line boundaries/dependencies -- NestJS guard via @UseGuards, see design.md Decision 8
 import { JwtGuard } from '../../../infrastructure/auth/jwt.guard';
 import { ValidationError } from '../../../shared/errors';
 import { LeaderboardTopQuerySchema } from '../dto/leaderboard.dto';
@@ -11,16 +11,13 @@ import { LeaderboardTopQuerySchema } from '../dto/leaderboard.dto';
 @Controller('v1/leaderboard')
 @UseGuards(JwtGuard)
 export class LeaderboardController {
-  constructor(
-    @Inject('LeaderboardCache') private readonly cache: LeaderboardCache,
-    @Inject(DATABASE) private readonly db: Database,
-  ) {}
+  constructor(private readonly handler: GetLeaderboardTopHandler) {}
 
   @Get('top')
   async getTop(
     @Query() query: unknown,
     @Res({ passthrough: true }) res: FastifyReply,
-  ): Promise<{ entries: unknown[]; generatedAt: string }> {
+  ): Promise<{ entries: TopEntry[]; generatedAt: string }> {
     const result = LeaderboardTopQuerySchema.safeParse(query);
     if (!result.success) {
       throw new ValidationError(
@@ -30,32 +27,8 @@ export class LeaderboardController {
     }
     const parsed = result.data;
 
-    try {
-      const entries = await this.cache.getTop(parsed.limit);
-      res.header('X-Cache-Status', 'hit');
-      return { entries, generatedAt: new Date().toISOString() };
-    } catch {
-      // Cache threw — fall back to direct Postgres query
-      const rows = await this.db
-        .selectFrom('user_scores')
-        .select(['user_id', 'total_score', 'updated_at'])
-        .orderBy('total_score', 'desc')
-        .orderBy('updated_at', 'asc')
-        .limit(parsed.limit)
-        .execute();
-
-      const fallbackEntries = rows.map((row, index) => ({
-        rank: index + 1,
-        userId: row.user_id,
-        score: Number(row.total_score),
-        updatedAt: new Date(row.updated_at),
-      }));
-
-      res.header('X-Cache-Status', 'miss');
-      return {
-        entries: fallbackEntries,
-        generatedAt: new Date().toISOString(),
-      };
-    }
+    const outcome = await this.handler.execute(parsed.limit);
+    res.header('X-Cache-Status', outcome.source);
+    return { entries: outcome.entries, generatedAt: new Date().toISOString() };
   }
 }

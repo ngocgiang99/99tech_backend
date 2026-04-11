@@ -10,64 +10,32 @@ jest.mock('jose', () => ({
 import { ValidationError } from '../../../../src/scoreboard/shared/errors';
 
 import { LeaderboardController } from '../../../../src/scoreboard/interface/http/controllers/leaderboard.controller';
-import type {
-  LeaderboardCache,
-  LeaderboardEntry,
-} from '../../../../src/scoreboard/domain/ports/leaderboard-cache';
-import type { Database } from '../../../../src/database/database.factory';
+import type { GetLeaderboardTopHandler } from '../../../../src/scoreboard/application/queries';
+import type { TopEntry } from '../../../../src/scoreboard/domain/ports/user-score.repository';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeEntry(
-  rank: number,
-  userId: string,
-  score: number,
-): LeaderboardEntry {
+function makeEntry(rank: number, userId: string, score: number): TopEntry {
   return { rank, userId, score, updatedAt: new Date('2026-01-01T00:00:00Z') };
 }
 
-function makeCacheMock(topEntries: LeaderboardEntry[]): LeaderboardCache {
+function makeHandlerMock(
+  result: { source: 'hit' | 'miss'; entries: TopEntry[] } | Error,
+): GetLeaderboardTopHandler {
   return {
-    upsert: jest.fn(),
-    getTop: jest.fn().mockResolvedValue(topEntries),
-    getRank: jest.fn().mockResolvedValue(null),
-  };
-}
-
-function makeDbMock(
-  rows: Array<{
-    user_id: string;
-    total_score: number | bigint;
-    updated_at: string;
-  }>,
-): Database {
-  const builder = {
-    select: () => builder,
-    orderBy: () => builder,
-    limit: () => builder,
-    execute: jest.fn().mockResolvedValue(rows),
-  };
-  return {
-    selectFrom: jest.fn().mockReturnValue(builder),
-  } as unknown as Database;
+    execute: jest.fn().mockImplementation(() =>
+      result instanceof Error ? Promise.reject(result) : Promise.resolve(result),
+    ),
+  } as unknown as GetLeaderboardTopHandler;
 }
 
 function makeResMock(): { header: jest.Mock } {
   return { header: jest.fn() };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('LeaderboardController unit tests', () => {
-  it('HIT path with entries → X-Cache-Status: hit, no DB query', async () => {
+  it('HIT path with entries → X-Cache-Status: hit', async () => {
     const entries = [makeEntry(1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 200)];
-    const cache = makeCacheMock(entries);
-    const db = makeDbMock([]);
-    const controller = new LeaderboardController(cache, db);
+    const handler = makeHandlerMock({ source: 'hit', entries });
+    const controller = new LeaderboardController(handler);
     const res = makeResMock();
 
     const result = await controller.getTop(
@@ -77,14 +45,14 @@ describe('LeaderboardController unit tests', () => {
 
     expect(result.entries).toEqual(entries);
     expect(typeof result.generatedAt).toBe('string');
-    expect((db.selectFrom as jest.Mock).mock.calls).toHaveLength(0);
     expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'hit');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- jest mock, not a real method reference
+    expect(handler.execute).toHaveBeenCalledWith(5);
   });
 
-  it('HIT path with empty Redis result (Redis reachable) → X-Cache-Status: hit, entries: []', async () => {
-    const cache = makeCacheMock([]);
-    const db = makeDbMock([]);
-    const controller = new LeaderboardController(cache, db);
+  it('HIT path with empty entries → X-Cache-Status: hit, entries: []', async () => {
+    const handler = makeHandlerMock({ source: 'hit', entries: [] });
+    const controller = new LeaderboardController(handler);
     const res = makeResMock();
 
     const result = await controller.getTop(
@@ -93,30 +61,16 @@ describe('LeaderboardController unit tests', () => {
     );
 
     expect(result.entries).toEqual([]);
-    expect((db.selectFrom as jest.Mock).mock.calls).toHaveLength(0);
     expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'hit');
   });
 
-  it('MISS path — cache throws → X-Cache-Status: miss, Postgres fallback entries returned', async () => {
-    const cache: LeaderboardCache = {
-      upsert: jest.fn(),
-      getTop: jest.fn().mockRejectedValue(new Error('Redis unreachable')),
-      getRank: jest.fn().mockResolvedValue(null),
-    };
-    const dbRows = [
-      {
-        user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-        total_score: 300,
-        updated_at: '2026-01-01T00:00:00.000Z',
-      },
-      {
-        user_id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-        total_score: 200,
-        updated_at: '2026-01-02T00:00:00.000Z',
-      },
+  it('MISS path → X-Cache-Status: miss, handler-provided entries returned', async () => {
+    const entries = [
+      makeEntry(1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 300),
+      makeEntry(2, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 200),
     ];
-    const db = makeDbMock(dbRows);
-    const controller = new LeaderboardController(cache, db);
+    const handler = makeHandlerMock({ source: 'miss', entries });
+    const controller = new LeaderboardController(handler);
     const res = makeResMock();
 
     const result = await controller.getTop(
@@ -125,28 +79,14 @@ describe('LeaderboardController unit tests', () => {
     );
 
     expect(result.entries).toHaveLength(2);
-    const e = result.entries as Array<{
-      rank: number;
-      userId: string;
-      score: number;
-    }>;
-    expect(e[0]).toMatchObject({
-      rank: 1,
-      userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-      score: 300,
-    });
-    expect(e[1]).toMatchObject({
-      rank: 2,
-      userId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-      score: 200,
-    });
+    expect(result.entries[0]).toMatchObject({ rank: 1, score: 300 });
+    expect(result.entries[1]).toMatchObject({ rank: 2, score: 200 });
     expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'miss');
   });
 
   it('limit > 100 → ValidationError', async () => {
     const controller = new LeaderboardController(
-      makeCacheMock([]),
-      makeDbMock([]),
+      makeHandlerMock({ source: 'hit', entries: [] }),
     );
     await expect(
       controller.getTop({ limit: '101' } as unknown, makeResMock() as never),
@@ -155,8 +95,7 @@ describe('LeaderboardController unit tests', () => {
 
   it('limit < 1 → ValidationError', async () => {
     const controller = new LeaderboardController(
-      makeCacheMock([]),
-      makeDbMock([]),
+      makeHandlerMock({ source: 'hit', entries: [] }),
     );
     await expect(
       controller.getTop({ limit: '0' } as unknown, makeResMock() as never),
@@ -165,8 +104,7 @@ describe('LeaderboardController unit tests', () => {
 
   it('invalid string limit → ValidationError', async () => {
     const controller = new LeaderboardController(
-      makeCacheMock([]),
-      makeDbMock([]),
+      makeHandlerMock({ source: 'hit', entries: [] }),
     );
     await expect(
       controller.getTop(
@@ -176,21 +114,23 @@ describe('LeaderboardController unit tests', () => {
     ).rejects.toThrow(ValidationError);
   });
 
-  it('no limit param → defaults to 10, cache.getTop called with 10', async () => {
-    const cache = makeCacheMock([
-      makeEntry(1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 100),
-    ]);
-    const controller = new LeaderboardController(cache, makeDbMock([]));
+  it('no limit param → defaults to 10, handler.execute called with 10', async () => {
+    const handler = makeHandlerMock({
+      source: 'hit',
+      entries: [makeEntry(1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 100)],
+    });
+    const controller = new LeaderboardController(handler);
     await controller.getTop({} as unknown, makeResMock() as never);
     // eslint-disable-next-line @typescript-eslint/unbound-method -- jest mock, not a real method reference
-    expect(cache.getTop).toHaveBeenCalledWith(10);
+    expect(handler.execute).toHaveBeenCalledWith(10);
   });
 
   it('generatedAt is a valid ISO date string', async () => {
-    const cache = makeCacheMock([
-      makeEntry(1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 100),
-    ]);
-    const controller = new LeaderboardController(cache, makeDbMock([]));
+    const handler = makeHandlerMock({
+      source: 'hit',
+      entries: [makeEntry(1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 100)],
+    });
+    const controller = new LeaderboardController(handler);
     const result = await controller.getTop(
       { limit: '1' } as unknown,
       makeResMock() as never,

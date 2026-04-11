@@ -1,7 +1,7 @@
 import type { Registry } from 'prom-client';
 
 import { HealthController } from '../../../../../src/scoreboard/interface/health/health.controller';
-import type { HealthService } from '../../../../../src/scoreboard/interface/health/health.service';
+import type { HealthService } from '../../../../../src/scoreboard/infrastructure/health/health.service';
 
 // ---------------------------------------------------------------------------
 // Fakes

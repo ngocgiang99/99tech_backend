@@ -116,6 +116,7 @@ describe('IncrementScoreHandler.execute', () => {
     );
 
     expect(result).toEqual({
+      kind: 'committed',
       userId: USER.value,
       newScore: 111, // 100 + 1 seed + 10
       rank: null,
@@ -141,6 +142,7 @@ describe('IncrementScoreHandler.execute', () => {
     );
 
     expect(result).toEqual({
+      kind: 'committed',
       userId: USER.value,
       newScore: 7,
       rank: null,
@@ -154,7 +156,7 @@ describe('IncrementScoreHandler.execute', () => {
     expect(stored!.lastActionId).toBe(ACTION_A.value);
   });
 
-  it('idempotent replay of the same actionId raises IdempotencyViolationError', async () => {
+  it('idempotent replay of the same actionId returns kind: idempotent-replay with prior totalScoreAfter', async () => {
     const repo = new FakeUserScoreRepository();
     const cache = new FakeLeaderboardCache();
     const handler = makeHandler(repo, cache);
@@ -167,12 +169,42 @@ describe('IncrementScoreHandler.execute', () => {
       occurredAt: now,
     });
 
-    await handler.execute(cmd); // first call succeeds
+    // First call commits 5 and records the prior score event in the fake.
+    await handler.execute(cmd);
 
-    // Second call with the same actionId must raise the domain error
-    await expect(handler.execute(cmd)).rejects.toBeInstanceOf(
-      IdempotencyViolationError,
-    );
+    // Second call sees the IdempotencyViolationError inside the handler, looks
+    // up the prior event, and returns the historical outcome tagged idempotent-replay.
+    const replayResult = await handler.execute(cmd);
+
+    expect(replayResult).toEqual({
+      kind: 'idempotent-replay',
+      userId: USER.value,
+      newScore: 5,
+      rank: null,
+      topChanged: null,
+    });
+  });
+
+  it('idempotent replay with missing prior event throws InternalError', async () => {
+    const repo = new FakeUserScoreRepository();
+    // Force credit() to throw IdempotencyViolationError but findScoreEventByActionId() to return null
+    jest
+      .spyOn(repo, 'credit')
+      .mockRejectedValueOnce(new IdempotencyViolationError(ACTION_A.value));
+    jest.spyOn(repo, 'findScoreEventByActionId').mockResolvedValueOnce(null);
+    const cache = new FakeLeaderboardCache();
+    const handler = makeHandler(repo, cache);
+
+    await expect(
+      handler.execute(
+        new IncrementScoreCommand({
+          userId: USER,
+          actionId: ACTION_A,
+          delta: ScoreDelta.of(5),
+          occurredAt: new Date(),
+        }),
+      ),
+    ).rejects.toMatchObject({ message: expect.stringContaining('Prior credit record not found') });
   });
 
   it('domain invariant violation aborts before persistence', async () => {

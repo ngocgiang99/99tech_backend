@@ -258,10 +258,20 @@ export class OutboxPublisherService
         );
         const msgId = String(maxId);
 
+        // Serialize LeaderboardEntry[] to a JSON-safe shape. Dates become ISO
+        // strings so the payload satisfies `Record<string, unknown>` without
+        // casting, and JetStream's JSONCodec can round-trip it cleanly.
+        const serializedTop = top.map((entry) => ({
+          rank: entry.rank,
+          userId: entry.userId,
+          score: entry.score,
+          updatedAt: entry.updatedAt.toISOString(),
+        }));
+
         await this.publisher.publish(
           {
             subject: 'scoreboard.leaderboard.updated',
-            payload: { top: top as unknown as Record<string, unknown> },
+            payload: { top: serializedTop },
           },
           { msgId },
         );

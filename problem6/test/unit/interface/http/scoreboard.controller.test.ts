@@ -27,102 +27,68 @@ jest.mock('@opentelemetry/api', () => ({
   SpanStatusCode: { ERROR: 2, OK: 1 },
 }));
 
-import { InternalError } from '../../../../src/scoreboard/shared/errors';
-
 import { ScoreboardController } from '../../../../src/scoreboard/interface/http/controllers/scoreboard.controller';
-import { IdempotencyViolationError } from '../../../../src/scoreboard/domain/errors/idempotency-violation.error';
 import { InvalidArgumentError } from '../../../../src/scoreboard/domain/errors/invalid-argument.error';
-import type { ScoreEventRecord } from '../../../../src/scoreboard/domain/ports/user-score.repository';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+import type { IncrementScoreResult } from '../../../../src/scoreboard/application/commands';
+import type { AuthenticatedRequest } from '../../../../src/scoreboard/interface/http/authenticated-request';
 
 const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';
 const VALID_ACTION_UUID = '550e8400-e29b-41d4-a716-446655440001';
 
-function makeHandler(result?: { userId: string; newScore: number; rank: null; topChanged: null }) {
+function makeHandler(result?: IncrementScoreResult) {
   return {
     execute: jest.fn().mockResolvedValue(
-      result ?? { userId: VALID_UUID, newScore: 100, rank: null, topChanged: null },
+      result ?? {
+        kind: 'committed',
+        userId: VALID_UUID,
+        newScore: 100,
+        rank: null,
+        topChanged: null,
+      },
     ),
   };
 }
 
-function makeRepository(priorEvent?: ScoreEventRecord | null) {
-  return {
-    findByUserId: jest.fn(),
-    credit: jest.fn(),
-    findScoreEventByActionId: jest.fn().mockResolvedValue(priorEvent ?? null),
-  };
-}
-
-function makeCounter() {
-  return { inc: jest.fn() };
-}
-
-function makeRequest(userId = VALID_UUID) {
-  return { userId };
+function makeRequest(userId = VALID_UUID): AuthenticatedRequest {
+  return { userId } as unknown as AuthenticatedRequest;
 }
 
 function makeBody(overrides: Partial<{ actionId: string; delta: number }> = {}) {
   return { actionId: VALID_ACTION_UUID, delta: 10, ...overrides };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('ScoreboardController.incrementScore', () => {
-  it('happy path returns handler result', async () => {
-    const expectedResult = { userId: VALID_UUID, newScore: 100, rank: null, topChanged: null };
-    const handler = makeHandler(expectedResult);
-    const repo = makeRepository();
-    const counter = makeCounter();
-    const controller = new ScoreboardController(handler as never, repo as never, counter as never);
+  it('happy path returns handler result with kind stripped', async () => {
+    const handler = makeHandler({
+      kind: 'committed',
+      userId: VALID_UUID,
+      newScore: 100,
+      rank: null,
+      topChanged: null,
+    });
+    const controller = new ScoreboardController(handler as never);
 
     const result = await controller.incrementScore(makeRequest(), makeBody());
 
-    expect(result).toEqual(expectedResult);
+    expect(result).toEqual({
+      userId: VALID_UUID,
+      newScore: 100,
+      rank: null,
+      topChanged: null,
+    });
+    expect((result as Record<string, unknown>).kind).toBeUndefined();
     expect(handler.execute).toHaveBeenCalledTimes(1);
   });
 
-  it('throws ZodError (400) for invalid body — non-UUID actionId', async () => {
-    const handler = makeHandler();
-    const repo = makeRepository();
-    const counter = makeCounter();
-    const controller = new ScoreboardController(handler as never, repo as never, counter as never);
-
-    await expect(
-      controller.incrementScore(makeRequest(), { actionId: 'not-a-uuid', delta: 10 }),
-    ).rejects.toThrow();
-  });
-
-  it('throws ZodError (400) for delta = 0', async () => {
-    const handler = makeHandler();
-    const repo = makeRepository();
-    const counter = makeCounter();
-    const controller = new ScoreboardController(handler as never, repo as never, counter as never);
-
-    await expect(
-      controller.incrementScore(makeRequest(), { actionId: VALID_ACTION_UUID, delta: 0 }),
-    ).rejects.toThrow();
-  });
-
-  it('idempotent replay returns prior result when prior event exists', async () => {
-    const handler = {
-      execute: jest.fn().mockRejectedValue(new IdempotencyViolationError(VALID_ACTION_UUID)),
-    };
-    const priorEvent: ScoreEventRecord = {
-      actionId: VALID_ACTION_UUID,
+  it('idempotent-replay result has kind stripped in response', async () => {
+    const handler = makeHandler({
+      kind: 'idempotent-replay',
       userId: VALID_UUID,
-      delta: 10,
-      totalScoreAfter: 200,
-      occurredAt: new Date(),
-    };
-    const repo = makeRepository(priorEvent);
-    const counter = makeCounter();
-    const controller = new ScoreboardController(handler as never, repo as never, counter as never);
+      newScore: 200,
+      rank: null,
+      topChanged: null,
+    });
+    const controller = new ScoreboardController(handler as never);
 
     const result = await controller.incrementScore(makeRequest(), makeBody());
 
@@ -132,29 +98,32 @@ describe('ScoreboardController.incrementScore', () => {
       rank: null,
       topChanged: null,
     });
-    expect(counter.inc).toHaveBeenCalledWith({ result: 'idempotent' });
+    expect((result as Record<string, unknown>).kind).toBeUndefined();
   });
 
-  it('throws InternalError when idempotent replay has no prior event', async () => {
-    const handler = {
-      execute: jest.fn().mockRejectedValue(new IdempotencyViolationError(VALID_ACTION_UUID)),
-    };
-    const repo = makeRepository(null); // no prior event found
-    const counter = makeCounter();
-    const controller = new ScoreboardController(handler as never, repo as never, counter as never);
+  it('throws ZodError (400) for invalid body — non-UUID actionId', async () => {
+    const handler = makeHandler();
+    const controller = new ScoreboardController(handler as never);
 
     await expect(
-      controller.incrementScore(makeRequest(), makeBody()),
-    ).rejects.toBeInstanceOf(InternalError);
+      controller.incrementScore(makeRequest(), { actionId: 'not-a-uuid', delta: 10 }),
+    ).rejects.toThrow();
   });
 
-  it('re-throws non-IdempotencyViolation errors', async () => {
+  it('throws ZodError (400) for delta = 0', async () => {
+    const handler = makeHandler();
+    const controller = new ScoreboardController(handler as never);
+
+    await expect(
+      controller.incrementScore(makeRequest(), { actionId: VALID_ACTION_UUID, delta: 0 }),
+    ).rejects.toThrow();
+  });
+
+  it('propagates non-idempotency errors from handler', async () => {
     const handler = {
       execute: jest.fn().mockRejectedValue(new InvalidArgumentError('bad delta')),
     };
-    const repo = makeRepository();
-    const counter = makeCounter();
-    const controller = new ScoreboardController(handler as never, repo as never, counter as never);
+    const controller = new ScoreboardController(handler as never);
 
     await expect(
       controller.incrementScore(makeRequest(), makeBody()),

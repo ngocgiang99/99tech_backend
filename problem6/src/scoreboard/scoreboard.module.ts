@@ -1,9 +1,11 @@
-import { Module } from '@nestjs/common';
+import { Module, type Provider } from '@nestjs/common';
 
 import {
   IncrementScoreHandler,
   USER_SCORE_REPOSITORY,
 } from './application/commands';
+import { GetLeaderboardTopHandler } from './application/queries';
+import { ACTION_TOKEN_ISSUER } from './domain/ports/action-token-issuer.port';
 import { JwtGuard } from './infrastructure/auth/jwt.guard';
 import { HmacActionTokenIssuer } from './infrastructure/auth/hmac-action-token.issuer';
 import { HmacActionTokenVerifier } from './infrastructure/auth/hmac-action-token.verifier';
@@ -24,6 +26,11 @@ import { HealthModule } from './interface/health';
 // RedisModule is @Global() and already imported in AppModule — do NOT import it here.
 // NatsModule is @Global() and already imported in AppModule — do NOT import it here.
 
+const actionTokenIssuerProvider: Provider = {
+  provide: ACTION_TOKEN_ISSUER,
+  useExisting: HmacActionTokenIssuer,
+};
+
 @Module({
   imports: [HealthModule],
   controllers: [
@@ -40,9 +47,11 @@ import { HealthModule } from './interface/health';
     },
     // Application layer
     IncrementScoreHandler,
+    GetLeaderboardTopHandler,
     // Auth
     JwtGuard,
     HmacActionTokenIssuer,
+    actionTokenIssuerProvider,
     HmacActionTokenVerifier,
     ActionTokenGuard,
     // Rate limiting
@@ -55,6 +64,6 @@ import { HealthModule } from './interface/health';
     // Outbox publisher (depends on LeaderboardCache, so must live in this module's scope)
     OutboxPublisherService,
   ],
-  exports: [IncrementScoreHandler],
+  exports: [IncrementScoreHandler, GetLeaderboardTopHandler],
 })
 export class ScoreboardModule {}

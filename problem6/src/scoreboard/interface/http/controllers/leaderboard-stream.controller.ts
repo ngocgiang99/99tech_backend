@@ -8,18 +8,24 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyReply } from 'fastify';
 
 import { ConfigService } from '../../../../config';
 import {
   LEADERBOARD_CACHE_TOKEN,
   type LeaderboardCache,
 } from '../../../domain';
+import {
+  LEADERBOARD_UPDATES_PORT,
+  type LeaderboardUpdateEvent,
+  type LeaderboardUpdatesPort,
+} from '../../../domain/ports/leaderboard-updates.port';
+// eslint-disable-next-line boundaries/dependencies -- NestJS guard via @UseGuards, see design.md Decision 8
 import { JwtGuard } from '../../../infrastructure/auth/jwt.guard';
 import {
-  LeaderboardUpdateEvent,
-  LeaderboardUpdatesEmitter,
-} from '../../../infrastructure/messaging/nats/leaderboard-updates.emitter';
+  type AuthenticatedRequest,
+  peekAuthenticatedUserId,
+} from '../authenticated-request';
 
 const SHUTDOWN_FRAME = 'event: shutdown\ndata: {"reason":"graceful"}\n\n';
 
@@ -33,13 +39,14 @@ export class LeaderboardStreamController implements OnApplicationShutdown {
 
   constructor(
     @Inject(LEADERBOARD_CACHE_TOKEN) private readonly cache: LeaderboardCache,
-    private readonly emitter: LeaderboardUpdatesEmitter,
+    @Inject(LEADERBOARD_UPDATES_PORT)
+    private readonly updates: LeaderboardUpdatesPort,
     private readonly config: ConfigService,
   ) {}
 
   @Get('stream')
   async stream(
-    @Req() req: FastifyRequest,
+    @Req() req: AuthenticatedRequest,
     @Res() reply: FastifyReply,
   ): Promise<void> {
     const maxConn = this.config.get('MAX_SSE_CONN_PER_INSTANCE');
@@ -143,8 +150,8 @@ export class LeaderboardStreamController implements OnApplicationShutdown {
       writeFrame('snapshot', { top: [] });
     }
 
-    // Subscribe to local emitter
-    const unsubscribe = this.emitter.subscribe(
+    // Subscribe to in-process updates port
+    const unsubscribe = this.updates.subscribe(
       (event: LeaderboardUpdateEvent) => {
         writeFrame('leaderboard.updated', event);
       },
@@ -164,7 +171,7 @@ export class LeaderboardStreamController implements OnApplicationShutdown {
         return;
       }
       if (bufferFullSince !== null && Date.now() - bufferFullSince >= TIMEOUT) {
-        const userId = (req as unknown as { userId?: string }).userId;
+        const userId = peekAuthenticatedUserId(req);
         this.logger.warn(
           { userId },
           'sse slow client disconnected due to buffer timeout',

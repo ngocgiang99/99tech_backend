@@ -100,21 +100,31 @@ function extractBody(headers: Record<string, unknown>): {
 }
 
 /**
- * Build the structured error metadata object used as the first argument of
- * `logger.error(obj, msg)`. Captures the full cause chain, scrubbed headers,
- * query string (capped at 2KB), request body metadata (size + content-type
- * only — NEVER body content), userAgent, remoteAddr, timestamp, and the
- * non-enumerable `pgCode` if `mapDbError()` attached one.
+ * Context shape for a non-HTTP error path (background worker, message handler,
+ * shutdown hook, scheduled job). Supplied by `buildBackgroundErrorMetadata` to
+ * populate the same metadata envelope as the HTTP path without fabricating a
+ * Fastify request.
  */
-export function buildErrorMetadata(
-  err: DomainError,
+export interface BackgroundContext {
+  /** Logical source identifier — becomes `route`, e.g. 'outbox-publisher'. */
+  source?: string;
+}
+
+interface MetadataSource {
+  requestId: string | null;
+  method: string;
+  route: string;
+  rawHeaders: Record<string, unknown>;
+  query: string;
+  userAgent: string | null;
+  remoteAddr: string | null;
+}
+
+function sourceFromRequest(
   request: FastifyRequest & { requestId?: string },
-  errorId: string,
-): ErrorMetadata {
+): MetadataSource {
   const rawHeaders = (request.headers ?? {}) as Record<string, unknown>;
-  const scrubbed = scrubHeaders(rawHeaders);
   const query = capQuery(extractQuery(request));
-  const body = extractBody(rawHeaders);
   const userAgent = extractHeaderString(rawHeaders, 'user-agent');
   const remoteAddr =
     (request as { ip?: string }).ip ??
@@ -125,6 +135,36 @@ export function buildErrorMetadata(
     (request as { routeOptions?: { url?: string } }).routeOptions?.url ??
     request.url ??
     '__unmatched';
+  return {
+    requestId: request.requestId ?? null,
+    method: request.method ?? 'UNKNOWN',
+    route,
+    rawHeaders,
+    query,
+    userAgent,
+    remoteAddr,
+  };
+}
+
+function sourceFromBackground(context: BackgroundContext): MetadataSource {
+  return {
+    requestId: null,
+    method: 'BACKGROUND',
+    route: context.source ?? '__background',
+    rawHeaders: {},
+    query: '',
+    userAgent: null,
+    remoteAddr: null,
+  };
+}
+
+function buildFromSource(
+  err: DomainError,
+  src: MetadataSource,
+  errorId: string,
+): ErrorMetadata {
+  const scrubbed = scrubHeaders(src.rawHeaders);
+  const body = extractBody(src.rawHeaders);
 
   const metadata: ErrorMetadata = {
     errorId,
@@ -133,14 +173,14 @@ export function buildErrorMetadata(
     status: err.getStatus(),
     message: err.message,
     cause: walkCause(err),
-    requestId: request.requestId ?? null,
-    method: request.method ?? 'UNKNOWN',
-    route,
+    requestId: src.requestId,
+    method: src.method,
+    route: src.route,
     headers: scrubbed,
-    query,
+    query: src.query,
     body,
-    userAgent,
-    remoteAddr,
+    userAgent: src.userAgent,
+    remoteAddr: src.remoteAddr,
     timestamp: new Date().toISOString(),
   };
 
@@ -153,4 +193,33 @@ export function buildErrorMetadata(
   }
 
   return metadata;
+}
+
+/**
+ * Build the structured error metadata object used as the first argument of
+ * `logger.error(obj, msg)` on the HTTP path. Captures the full cause chain,
+ * scrubbed headers, query string (capped at 2KB), request body metadata (size
+ * + content-type only — NEVER body content), userAgent, remoteAddr, timestamp,
+ * and the non-enumerable `pgCode` if `mapDbError()` attached one.
+ */
+export function buildErrorMetadata(
+  err: DomainError,
+  request: FastifyRequest & { requestId?: string },
+  errorId: string,
+): ErrorMetadata {
+  return buildFromSource(err, sourceFromRequest(request), errorId);
+}
+
+/**
+ * Build the same structured metadata envelope for a non-HTTP error path. The
+ * `method` becomes `'BACKGROUND'` and the `route` defaults to `'__background'`
+ * unless `context.source` is supplied. Headers/query/userAgent/remoteAddr are
+ * empty or null — background errors have no inbound request.
+ */
+export function buildBackgroundErrorMetadata(
+  err: DomainError,
+  context: BackgroundContext,
+  errorId: string,
+): ErrorMetadata {
+  return buildFromSource(err, sourceFromBackground(context), errorId);
 }

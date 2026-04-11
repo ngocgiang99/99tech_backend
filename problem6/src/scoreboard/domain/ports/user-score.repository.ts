@@ -2,6 +2,9 @@ import { ScoreCredited } from '../events/score-credited.event';
 import { UserScore } from '../user-score.aggregate';
 import { ActionId } from '../value-objects/action-id';
 import { UserId } from '../value-objects/user-id';
+import type { LeaderboardEntry } from './leaderboard-cache';
+
+export type TopEntry = LeaderboardEntry;
 
 /**
  * Historical record of a settled score-credit event.
@@ -37,4 +40,5 @@ export interface UserScoreRepository {
   findScoreEventByActionId(
     actionId: ActionId,
   ): Promise<ScoreEventRecord | null>;
+  findTopN(limit: number): Promise<TopEntry[]>;
 }

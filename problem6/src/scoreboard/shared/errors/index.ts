@@ -25,9 +25,14 @@ export {
   MAX_CAUSE_DEPTH,
   MAX_QUERY_BYTES,
   buildErrorMetadata,
+  buildBackgroundErrorMetadata,
   walkCause,
 } from './error-metadata';
-export type { CauseEntry, ErrorMetadata } from './error-metadata';
+export type {
+  BackgroundContext,
+  CauseEntry,
+  ErrorMetadata,
+} from './error-metadata';
 
 export { DEFAULT_HEADER_DENYLIST, scrubHeaders } from './scrub-headers';
 

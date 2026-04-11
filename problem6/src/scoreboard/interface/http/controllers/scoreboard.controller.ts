@@ -2,54 +2,52 @@ import {
   Body,
   Controller,
   HttpCode,
-  Inject,
   Post,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import type { Counter } from 'prom-client';
 
 import {
   IncrementScoreHandler,
-  IncrementScoreResult,
-  USER_SCORE_REPOSITORY,
+  type IncrementScoreResult,
 } from '../../../application/commands';
 import { IncrementScoreCommand } from '../../../application/commands/increment-score.command';
-import { IdempotencyViolationError } from '../../../domain/errors/idempotency-violation.error';
-import type { UserScoreRepository } from '../../../domain/ports/user-score.repository';
 import { ActionId } from '../../../domain/value-objects/action-id';
 import { ScoreDelta } from '../../../domain/value-objects/score-delta';
 import { UserId } from '../../../domain/value-objects/user-id';
+import {
+  type AuthenticatedRequest,
+  getAuthenticatedUserId,
+} from '../authenticated-request';
+// eslint-disable-next-line boundaries/dependencies -- NestJS guard via @UseGuards, see design.md Decision 8
 import { ActionTokenGuard } from '../../../infrastructure/auth/action-token.guard';
+// eslint-disable-next-line boundaries/dependencies -- NestJS guard via @UseGuards, see design.md Decision 8
 import { JwtGuard } from '../../../infrastructure/auth/jwt.guard';
+// eslint-disable-next-line boundaries/dependencies -- NestJS guard via @UseGuards, see design.md Decision 8
 import { RateLimitGuard } from '../../../infrastructure/rate-limit/rate-limit.guard';
-import { InternalError } from '../../../shared/errors';
-import { METRIC_SCORE_INCREMENT_TOTAL } from '../../../../shared/metrics';
 import { IncrementScoreSchema } from '../dto/increment-score.dto';
+
+type IncrementScoreResponse = Omit<
+  Extract<IncrementScoreResult, { kind: 'committed' }>,
+  'kind'
+>;
 
 @Controller('v1')
 export class ScoreboardController {
-  constructor(
-    private readonly handler: IncrementScoreHandler,
-    @Inject(USER_SCORE_REPOSITORY)
-    private readonly repository: UserScoreRepository,
-    @Inject(METRIC_SCORE_INCREMENT_TOTAL)
-    private readonly scoreIncrementTotal: Counter<string>,
-  ) {}
+  constructor(private readonly handler: IncrementScoreHandler) {}
 
   // Guard order MUST be exactly [JwtGuard, ActionTokenGuard, RateLimitGuard] — spec and design.md §Decision 1
   @Post('scores:increment')
   @HttpCode(200)
   @UseGuards(JwtGuard, ActionTokenGuard, RateLimitGuard)
   async incrementScore(
-    @Req() req: Record<string, unknown>,
+    @Req() req: AuthenticatedRequest,
     @Body() rawBody: unknown,
-  ): Promise<IncrementScoreResult> {
+  ): Promise<IncrementScoreResponse> {
     // ZodError propagates to the global HttpExceptionFilter → 400 INVALID_ARGUMENT
     const body = IncrementScoreSchema.parse(rawBody);
 
-    // JwtGuard sets userId on the request
-    const userId = (req as unknown as { userId: string }).userId; // JwtGuard sets this
+    const userId = getAuthenticatedUserId(req);
 
     const cmd = new IncrementScoreCommand({
       userId: UserId.of(userId),
@@ -58,36 +56,8 @@ export class ScoreboardController {
       occurredAt: new Date(),
     });
 
-    try {
-      return await this.handler.execute(cmd);
-    } catch (err) {
-      if (err instanceof IdempotencyViolationError) {
-        // Layer-2 idempotency replay (design.md Decision 4):
-        // The Postgres unique constraint caught a duplicate — read the prior outcome and return it.
-        const prior = await this.repository.findScoreEventByActionId(
-          ActionId.of(body.actionId),
-        );
-
-        if (prior) {
-          this.scoreIncrementTotal.inc({ result: 'idempotent' });
-          return {
-            userId: prior.userId,
-            newScore: prior.totalScoreAfter,
-            rank: null,
-            topChanged: null,
-          };
-        }
-
-        // Edge case: Postgres row is gone (DB wiped between original credit and replay).
-        // Document: acceptable gap for MVP — step-05 outbox will harden this.
-        // Fall through to a 500 rather than silently returning wrong data.
-        throw new InternalError(
-          'Prior credit record not found for idempotent replay',
-        );
-      }
-
-      // All other errors propagate to the global HttpExceptionFilter.
-      throw err;
-    }
+    const { kind: _kind, ...rest } = await this.handler.execute(cmd);
+    void _kind;
+    return rest;
   }
 }

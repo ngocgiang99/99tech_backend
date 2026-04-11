@@ -3,6 +3,7 @@ import { ScoreCredited } from '../../../../src/scoreboard/domain/events/score-cr
 import type {
   OutboxRow,
   ScoreEventRecord,
+  TopEntry,
   UserScoreRepository,
 } from '../../../../src/scoreboard/domain/ports/user-score.repository';
 import { UserScore } from '../../../../src/scoreboard/domain/user-score.aggregate';
@@ -45,5 +46,20 @@ export class FakeUserScoreRepository implements UserScoreRepository {
     actionId: ActionId,
   ): Promise<ScoreEventRecord | null> {
     return this.scoreEvents.get(actionId.value) ?? null;
+  }
+
+  async findTopN(limit: number): Promise<TopEntry[]> {
+    const sorted = [...this.users.values()].sort((a, b) => {
+      if (a.totalScore !== b.totalScore) {
+        return b.totalScore - a.totalScore;
+      }
+      return a.updatedAt.getTime() - b.updatedAt.getTime();
+    });
+    return sorted.slice(0, limit).map((score, index) => ({
+      rank: index + 1,
+      userId: score.userId.value,
+      score: score.totalScore,
+      updatedAt: score.updatedAt,
+    }));
   }
 }

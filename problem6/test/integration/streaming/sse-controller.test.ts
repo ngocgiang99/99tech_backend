@@ -2,7 +2,7 @@
  * Integration test: LeaderboardStreamController
  *
  * Strategy: instantiate the controller directly (no NestJS bootstrap) with
- * a mock LeaderboardCache, a real LeaderboardUpdatesEmitter (backed by EventEmitter2),
+ * a mock LeaderboardCache, a real LeaderboardUpdatesInProcessAdapter (backed by EventEmitter2),
  * and a real ConfigService. We drive the request/reply objects with hand-crafted
  * mocks that capture SSE frames.
  *
@@ -40,10 +40,8 @@ jest.mock('@opentelemetry/api', () => ({
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '../../../src/config';
 import { EnvSchema } from '../../../src/config/schema';
-import {
-  LeaderboardUpdatesEmitter,
-  type LeaderboardUpdateEvent,
-} from '../../../src/scoreboard/infrastructure/messaging/nats/leaderboard-updates.emitter';
+import { LeaderboardUpdatesInProcessAdapter } from '../../../src/scoreboard/infrastructure/messaging/nats/leaderboard-updates.emitter';
+import type { LeaderboardUpdateEvent } from '../../../src/scoreboard/domain/ports/leaderboard-updates.port';
 import { LeaderboardStreamController } from '../../../src/scoreboard/interface/http/controllers/leaderboard-stream.controller';
 import type { LeaderboardCache, LeaderboardEntry } from '../../../src/scoreboard/domain';
 
@@ -159,13 +157,13 @@ function resetConnectionCount(): void {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('LeaderboardStreamController (SSE)', () => {
-  let emitter: LeaderboardUpdatesEmitter;
+  let emitter: LeaderboardUpdatesInProcessAdapter;
 
   beforeEach(() => {
     jest.useFakeTimers();
     resetConnectionCount();
     const ee = new EventEmitter2();
-    emitter = new LeaderboardUpdatesEmitter(ee);
+    emitter = new LeaderboardUpdatesInProcessAdapter(ee);
   });
 
   afterEach(() => {

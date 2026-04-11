@@ -2,7 +2,8 @@ import { Controller, Get, Inject, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import type { Registry } from 'prom-client';
 
-import { HealthService } from './health.service';
+// eslint-disable-next-line boundaries/dependencies -- health controller is a thin HTTP adapter over infra probes, see design.md Decision 6
+import { HealthService } from '../../infrastructure/health/health.service';
 
 @Controller()
 export class HealthController {

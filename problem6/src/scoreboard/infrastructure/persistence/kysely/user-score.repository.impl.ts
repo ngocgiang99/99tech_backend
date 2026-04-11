@@ -9,6 +9,7 @@ import { ScoreCredited } from '../../../domain/events/score-credited.event';
 import type {
   OutboxRow,
   ScoreEventRecord,
+  TopEntry,
   UserScoreRepository,
 } from '../../../domain/ports/user-score.repository';
 import { mapDbError } from '../../../shared/errors';
@@ -52,6 +53,31 @@ export class KyselyUserScoreRepository implements UserScoreRepository {
           ? row.updated_at
           : new Date(row.updated_at),
     });
+  }
+
+  async findTopN(limit: number): Promise<TopEntry[]> {
+    let rows;
+    try {
+      rows = await this.db
+        .selectFrom('user_scores')
+        .select(['user_id', 'total_score', 'updated_at'])
+        .orderBy('total_score', 'desc')
+        .orderBy('updated_at', 'asc')
+        .limit(limit)
+        .execute();
+    } catch (err) {
+      throw mapDbError(err);
+    }
+
+    return rows.map((row, index) => ({
+      rank: index + 1,
+      userId: row.user_id,
+      score: Number(row.total_score),
+      updatedAt:
+        row.updated_at instanceof Date
+          ? row.updated_at
+          : new Date(row.updated_at),
+    }));
   }
 
   async findScoreEventByActionId(

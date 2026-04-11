@@ -16,6 +16,7 @@ jest.mock('jose', () => ({
 }));
 
 import { ActionsController } from '../../../../src/scoreboard/interface/http/controllers/actions.controller';
+import type { AuthenticatedRequest } from '../../../../src/scoreboard/interface/http/authenticated-request';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -40,8 +41,8 @@ function makeIssuer(result?: {
   };
 }
 
-function makeRequest(userId = 'user-abc') {
-  return { userId };
+function makeRequest(userId = 'user-abc'): AuthenticatedRequest {
+  return { userId } as unknown as AuthenticatedRequest;
 }
 
 // ---------------------------------------------------------------------------

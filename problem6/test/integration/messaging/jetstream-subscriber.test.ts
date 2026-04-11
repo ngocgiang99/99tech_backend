@@ -18,7 +18,8 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 import { JetStreamSubscriber } from '../../../src/scoreboard/infrastructure/messaging/nats/jetstream.subscriber';
-import { LeaderboardUpdatesEmitter, type LeaderboardUpdateEvent } from '../../../src/scoreboard/infrastructure/messaging/nats/leaderboard-updates.emitter';
+import { LeaderboardUpdatesInProcessAdapter } from '../../../src/scoreboard/infrastructure/messaging/nats/leaderboard-updates.emitter';
+import type { LeaderboardUpdateEvent } from '../../../src/scoreboard/domain/ports/leaderboard-updates.port';
 import { ReadinessService } from '../../../src/shared/readiness/readiness.service';
 
 jest.setTimeout(120_000);
@@ -41,7 +42,7 @@ describe('JetStreamSubscriber integration', () => {
   let container: StartedNatsContainer;
   let nc: NatsConnection;
   let publisherNc: NatsConnection;
-  let emitter: LeaderboardUpdatesEmitter;
+  let emitter: LeaderboardUpdatesInProcessAdapter;
   let readiness: ReadinessService;
   let subscriber: JetStreamSubscriber;
 
@@ -56,7 +57,7 @@ describe('JetStreamSubscriber integration', () => {
     await bootstrapStream(nc);
 
     const eventEmitter = new EventEmitter2();
-    emitter = new LeaderboardUpdatesEmitter(eventEmitter);
+    emitter = new LeaderboardUpdatesInProcessAdapter(eventEmitter);
     readiness = new ReadinessService();
 
     subscriber = new JetStreamSubscriber(nc, emitter, readiness);
@@ -82,7 +83,7 @@ describe('JetStreamSubscriber integration', () => {
   });
 
   // ─── Test 2: Message delivered via local emitter ─────────────────────────
-  test('Test 2: publishing leaderboard.updated message is delivered to LeaderboardUpdatesEmitter', async () => {
+  test('Test 2: publishing leaderboard.updated message is delivered to LeaderboardUpdatesInProcessAdapter', async () => {
     const testEvent: LeaderboardUpdateEvent = {
       top: [
         {
@@ -128,7 +129,7 @@ describe('JetStreamSubscriber integration', () => {
     // and check the consumer list. Let's create a separate subscriber for this test.
     const nc3 = await connect(container.getConnectionOptions());
     const ee = new EventEmitter2();
-    const emitter3 = new LeaderboardUpdatesEmitter(ee);
+    const emitter3 = new LeaderboardUpdatesInProcessAdapter(ee);
     const readiness3 = new ReadinessService();
     const subscriber3 = new JetStreamSubscriber(nc3, emitter3, readiness3);
 
