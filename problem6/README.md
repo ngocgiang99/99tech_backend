@@ -1024,6 +1024,11 @@ ghcr.io/acme/problem6-scoreboard:prod
 | Redis ZSET empty | Trigger `LeaderboardRebuilder` manually; verify Postgres is reachable. |
 | JetStream stream missing | Re-run `StreamBootstrap` or apply the infra-as-code stream config. |
 
+### 16.4 Responsibility Boundaries
+
+- **IP-level rate limiting** is the responsibility of the ingress layer (nginx/ALB); problem6 enforces per-user quotas via `RateLimitGuard` only.
+- **`X-Cache-Status: hit|miss`** is emitted by `GET /v1/leaderboard/top` for k6 load-test assertions. The header is informational and MUST NOT be relied on by production clients.
+
 ---
 
 ## 17. Appendices

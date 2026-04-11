@@ -30,28 +30,32 @@ export class LeaderboardController {
     }
     const parsed = result.data;
 
-    const entries = await this.cache.getTop(parsed.limit);
-    if (entries.length > 0) {
+    try {
+      const entries = await this.cache.getTop(parsed.limit);
+      res.header('X-Cache-Status', 'hit');
       return { entries, generatedAt: new Date().toISOString() };
+    } catch {
+      // Cache threw — fall back to direct Postgres query
+      const rows = await this.db
+        .selectFrom('user_scores')
+        .select(['user_id', 'total_score', 'updated_at'])
+        .orderBy('total_score', 'desc')
+        .orderBy('updated_at', 'asc')
+        .limit(parsed.limit)
+        .execute();
+
+      const fallbackEntries = rows.map((row, index) => ({
+        rank: index + 1,
+        userId: row.user_id,
+        score: Number(row.total_score),
+        updatedAt: new Date(row.updated_at),
+      }));
+
+      res.header('X-Cache-Status', 'miss');
+      return {
+        entries: fallbackEntries,
+        generatedAt: new Date().toISOString(),
+      };
     }
-
-    // Cache miss — fall back to direct Postgres query
-    const rows = await this.db
-      .selectFrom('user_scores')
-      .select(['user_id', 'total_score', 'updated_at'])
-      .orderBy('total_score', 'desc')
-      .orderBy('updated_at', 'asc')
-      .limit(parsed.limit)
-      .execute();
-
-    const fallbackEntries = rows.map((row, index) => ({
-      rank: index + 1,
-      userId: row.user_id,
-      score: Number(row.total_score),
-      updatedAt: new Date(row.updated_at),
-    }));
-
-    res.header('X-Cache-Status', 'miss-fallback');
-    return { entries: fallbackEntries, generatedAt: new Date().toISOString() };
   }
 }

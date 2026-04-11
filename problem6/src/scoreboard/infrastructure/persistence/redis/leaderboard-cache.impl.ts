@@ -7,6 +7,7 @@ import {
 } from '../../../domain/ports/leaderboard-cache';
 import { Score } from '../../../domain/value-objects/score';
 import { UserId } from '../../../domain/value-objects/user-id';
+import { Singleflight } from '../../../shared/resilience';
 
 import { decodeScore, encodeScore } from './leaderboard-types';
 
@@ -14,6 +15,8 @@ const LEADERBOARD_KEY = 'leaderboard:global';
 
 @Injectable()
 export class RedisLeaderboardCache implements LeaderboardCache {
+  private readonly topReadSingleflight = new Singleflight<LeaderboardEntry[]>();
+
   constructor(@Inject('Redis') private readonly redis: Redis) {}
 
   async upsert(userId: UserId, score: Score, updatedAt: Date): Promise<void> {
@@ -23,26 +26,28 @@ export class RedisLeaderboardCache implements LeaderboardCache {
   }
 
   async getTop(n: number): Promise<LeaderboardEntry[]> {
-    const raw = await this.redis.zrevrange(
-      LEADERBOARD_KEY,
-      0,
-      n - 1,
-      'WITHSCORES',
-    );
-    // raw is [userId, encodedStr, userId, encodedStr, ...]
-    const entries: LeaderboardEntry[] = [];
-    for (let i = 0; i < raw.length; i += 2) {
-      const userId = raw[i];
-      const encoded = parseFloat(raw[i + 1]);
-      const { score, updatedAtSeconds } = decodeScore(encoded);
-      entries.push({
-        rank: entries.length + 1,
-        userId,
-        score,
-        updatedAt: new Date(updatedAtSeconds * 1000),
-      });
-    }
-    return entries;
+    return this.topReadSingleflight.do(`top:${n}`, async () => {
+      const raw = await this.redis.zrevrange(
+        LEADERBOARD_KEY,
+        0,
+        n - 1,
+        'WITHSCORES',
+      );
+      // raw is [userId, encodedStr, userId, encodedStr, ...]
+      const entries: LeaderboardEntry[] = [];
+      for (let i = 0; i < raw.length; i += 2) {
+        const userId = raw[i];
+        const encoded = parseFloat(raw[i + 1]);
+        const { score, updatedAtSeconds } = decodeScore(encoded);
+        entries.push({
+          rank: entries.length + 1,
+          userId,
+          score,
+          updatedAt: new Date(updatedAtSeconds * 1000),
+        });
+      }
+      return entries;
+    });
   }
 
   async getRank(userId: UserId): Promise<number | null> {

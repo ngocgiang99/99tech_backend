@@ -63,7 +63,7 @@ function makeResMock(): { header: jest.Mock } {
 // ---------------------------------------------------------------------------
 
 describe('LeaderboardController unit tests', () => {
-  it('cache hit — returns entries from cache, no DB query, no header set', async () => {
+  it('HIT path with entries → X-Cache-Status: hit, no DB query', async () => {
     const entries = [makeEntry(1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 200)];
     const cache = makeCacheMock(entries);
     const db = makeDbMock([]);
@@ -78,11 +78,31 @@ describe('LeaderboardController unit tests', () => {
     expect(result.entries).toEqual(entries);
     expect(typeof result.generatedAt).toBe('string');
     expect((db.selectFrom as jest.Mock).mock.calls).toHaveLength(0);
-    expect(res.header).not.toHaveBeenCalled();
+    expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'hit');
   });
 
-  it('empty cache → falls back to DB, sets X-Cache-Status header, maps rows to entries', async () => {
+  it('HIT path with empty Redis result (Redis reachable) → X-Cache-Status: hit, entries: []', async () => {
     const cache = makeCacheMock([]);
+    const db = makeDbMock([]);
+    const controller = new LeaderboardController(cache, db);
+    const res = makeResMock();
+
+    const result = await controller.getTop(
+      { limit: '10' } as unknown,
+      res as never,
+    );
+
+    expect(result.entries).toEqual([]);
+    expect((db.selectFrom as jest.Mock).mock.calls).toHaveLength(0);
+    expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'hit');
+  });
+
+  it('MISS path — cache throws → X-Cache-Status: miss, Postgres fallback entries returned', async () => {
+    const cache: LeaderboardCache = {
+      upsert: jest.fn(),
+      getTop: jest.fn().mockRejectedValue(new Error('Redis unreachable')),
+      getRank: jest.fn().mockResolvedValue(null),
+    };
     const dbRows = [
       {
         user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
@@ -120,7 +140,7 @@ describe('LeaderboardController unit tests', () => {
       userId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
       score: 200,
     });
-    expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'miss-fallback');
+    expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'miss');
   });
 
   it('limit > 100 → ValidationError', async () => {
@@ -162,6 +182,7 @@ describe('LeaderboardController unit tests', () => {
     ]);
     const controller = new LeaderboardController(cache, makeDbMock([]));
     await controller.getTop({} as unknown, makeResMock() as never);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- jest mock, not a real method reference
     expect(cache.getTop).toHaveBeenCalledWith(10);
   });
 

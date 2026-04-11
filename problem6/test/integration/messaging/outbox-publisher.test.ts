@@ -13,10 +13,21 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { startPostgres, startRedis, type PostgresHandle, type RedisHandle } from '../setup';
+import {
+  startPostgres,
+  startRedis,
+  type PostgresHandle,
+  type RedisHandle,
+} from '../setup';
 import { OutboxPublisherService } from '../../../src/scoreboard/infrastructure/outbox/outbox.publisher.service';
-import type { DomainEvent, DomainEventPublisher } from '../../../src/scoreboard/domain';
-import type { LeaderboardCache, LeaderboardEntry } from '../../../src/scoreboard/domain';
+import type {
+  DomainEvent,
+  DomainEventPublisher,
+} from '../../../src/scoreboard/domain';
+import type {
+  LeaderboardCache,
+  LeaderboardEntry,
+} from '../../../src/scoreboard/domain';
 import { ConfigService } from '../../../src/config';
 import { EnvSchema } from '../../../src/config/schema';
 
@@ -24,7 +35,9 @@ jest.setTimeout(120_000);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeConfig(overrides: Partial<Record<string, unknown>> = {}): ConfigService {
+function makeConfig(
+  overrides: Partial<Record<string, unknown>> = {},
+): ConfigService {
   const parsed = EnvSchema.parse({
     DATABASE_URL: 'postgres://test:test@localhost:5432/test', // will be overridden
     REDIS_URL: 'redis://localhost:6379',
@@ -45,8 +58,9 @@ function makePublisherMock(): DomainEventPublisher & {
   const calls: Array<{ event: DomainEvent; msgId: string }> = [];
   return {
     calls,
-    publish: jest.fn(async (event: DomainEvent, { msgId }: { msgId: string }) => {
+    publish: jest.fn((event: DomainEvent, { msgId }: { msgId: string }) => {
       calls.push({ event, msgId });
+      return Promise.resolve();
     }),
   };
 }
@@ -102,7 +116,10 @@ describe('OutboxPublisherService integration', () => {
   let redisHandle: RedisHandle;
 
   beforeAll(async () => {
-    [pgHandle, redisHandle] = await Promise.all([startPostgres(), startRedis()]);
+    [pgHandle, redisHandle] = await Promise.all([
+      startPostgres(),
+      startRedis(),
+    ]);
   });
 
   afterAll(async () => {
@@ -126,7 +143,13 @@ describe('OutboxPublisherService integration', () => {
     });
     const publisher = makePublisherMock();
     const cache = makeCacheMock();
-    const service = makeService(pgHandle.db, redisHandle.client, publisher, cache, config);
+    const service = makeService(
+      pgHandle.db,
+      redisHandle.client,
+      publisher,
+      cache,
+      config,
+    );
 
     service.onApplicationBootstrap();
 
@@ -151,10 +174,19 @@ describe('OutboxPublisherService integration', () => {
     const cache = makeCacheMock();
 
     const [creditedId] = await seedOutboxRows(pgHandle.db, [
-      { eventType: 'scoreboard.score.credited', payload: { userId: 'u1', delta: 50 } },
+      {
+        eventType: 'scoreboard.score.credited',
+        payload: { userId: 'u1', delta: 50 },
+      },
     ]);
 
-    const service = makeService(pgHandle.db, redisHandle.client, publisher, cache, config);
+    const service = makeService(
+      pgHandle.db,
+      redisHandle.client,
+      publisher,
+      cache,
+      config,
+    );
     service.onApplicationBootstrap();
 
     // Wait for at least one publish batch
@@ -162,9 +194,17 @@ describe('OutboxPublisherService integration', () => {
     await service.onApplicationShutdown();
 
     // The credited row should have been published
-    expect(publisher.calls.filter((c) => c.event.subject === 'scoreboard.score.credited')).toHaveLength(1);
-    const call = publisher.calls.find((c) => c.event.subject === 'scoreboard.score.credited')!;
-    expect(call.event.payload).toEqual(expect.objectContaining({ userId: 'u1', delta: 50 }));
+    expect(
+      publisher.calls.filter(
+        (c) => c.event.subject === 'scoreboard.score.credited',
+      ),
+    ).toHaveLength(1);
+    const call = publisher.calls.find(
+      (c) => c.event.subject === 'scoreboard.score.credited',
+    )!;
+    expect(call.event.payload).toEqual(
+      expect.objectContaining({ userId: 'u1', delta: 50 }),
+    );
     expect(call.msgId).toBe(creditedId);
   });
 
@@ -179,11 +219,23 @@ describe('OutboxPublisherService integration', () => {
     const cache = makeCacheMock([]);
 
     const ids = await seedOutboxRows(pgHandle.db, [
-      { eventType: 'scoreboard.score.credited', payload: { userId: 'u2', delta: 10 } },
-      { eventType: 'scoreboard.score.credited', payload: { userId: 'u3', delta: 20 } },
+      {
+        eventType: 'scoreboard.score.credited',
+        payload: { userId: 'u2', delta: 10 },
+      },
+      {
+        eventType: 'scoreboard.score.credited',
+        payload: { userId: 'u3', delta: 20 },
+      },
     ]);
 
-    const service = makeService(pgHandle.db, redisHandle.client, publisher, cache, config);
+    const service = makeService(
+      pgHandle.db,
+      redisHandle.client,
+      publisher,
+      cache,
+      config,
+    );
     service.onApplicationBootstrap();
     await new Promise((r) => setTimeout(r, 1_000));
     await service.onApplicationShutdown();
@@ -208,7 +260,13 @@ describe('OutboxPublisherService integration', () => {
     });
     const publisher = makePublisherMock();
     const cache = makeCacheMock();
-    const service = makeService(pgHandle.db, redisHandle.client, publisher, cache, config);
+    const service = makeService(
+      pgHandle.db,
+      redisHandle.client,
+      publisher,
+      cache,
+      config,
+    );
 
     service.onApplicationBootstrap();
     await new Promise((r) => setTimeout(r, 500)); // let it acquire lock
@@ -217,10 +275,42 @@ describe('OutboxPublisherService integration', () => {
     const lockedVal = await redisHandle.client.get('outbox:lock');
     expect(lockedVal).toBeTruthy();
 
-    await service.onApplicationShutdown();
+    await service.onApplicationShutdown('SIGTERM');
 
     // After shutdown, lock should be released
     const afterShutdown = await redisHandle.client.get('outbox:lock');
     expect(afterShutdown).toBeNull();
+  });
+
+  // ─── Test 5: Idempotent second shutdown call ────────────────────────────
+  test('Test 5: onApplicationShutdown is idempotent on second call', async () => {
+    const config = makeConfig({
+      DATABASE_URL: pgHandle.url,
+      OUTBOX_POLL_INTERVAL_MS: 10_000,
+    });
+    const publisher = makePublisherMock();
+    const cache = makeCacheMock();
+    const service = makeService(
+      pgHandle.db,
+      redisHandle.client,
+      publisher,
+      cache,
+      config,
+    );
+
+    service.onApplicationBootstrap();
+    await new Promise((r) => setTimeout(r, 500));
+
+    // First shutdown — releases lock
+    await service.onApplicationShutdown('SIGTERM');
+    const afterFirst = await redisHandle.client.get('outbox:lock');
+    expect(afterFirst).toBeNull();
+
+    // Second shutdown — no-op, does not throw
+    await expect(
+      service.onApplicationShutdown('SIGTERM'),
+    ).resolves.toBeUndefined();
+    const afterSecond = await redisHandle.client.get('outbox:lock');
+    expect(afterSecond).toBeNull();
   });
 });

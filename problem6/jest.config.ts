@@ -63,6 +63,16 @@ const config: Config = {
       functions: 100,
       statements: 100,
     },
+    // Resilience primitives (singleflight, logWithMetadata) — small, heavily
+    // exercised helpers. Branch threshold is 85 because a few optional-chain
+    // defaults (e.g. `timer.unref?.()`) and the `logger.fatal` fallback are
+    // unreachable in practice but counted as branches by Istanbul.
+    'src/scoreboard/shared/resilience/**/*.ts': {
+      lines: 100,
+      branches: 85,
+      functions: 100,
+      statements: 100,
+    },
   },
 };
 

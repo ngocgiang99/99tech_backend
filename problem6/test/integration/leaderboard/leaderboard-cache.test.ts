@@ -143,4 +143,32 @@ describe('RedisLeaderboardCache integration', () => {
     expect(rankA).toBe(1);
     expect(rankB).toBe(2);
   });
+
+  // ---------------------------------------------------------------------------
+  // Test 6: singleflight — 100 concurrent getTop(10) collapse into one ZREVRANGE
+  // ---------------------------------------------------------------------------
+  test('Test 6: 100 concurrent getTop(10) calls issue exactly one ZREVRANGE', async () => {
+    // Seed one entry so getTop has something meaningful to return
+    const now = new Date('2026-01-01T00:00:00Z');
+    await cache.upsert(uid(), Score.of(42), now);
+
+    // Fresh cache instance so its Singleflight map starts empty
+    const freshCache = new RedisLeaderboardCache(handle.client as never);
+    const zrevrangeSpy = jest.spyOn(handle.client, 'zrevrange');
+
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 100 }, () => freshCache.getTop(10)),
+      );
+
+      expect(results).toHaveLength(100);
+      for (const entries of results) {
+        expect(entries).toHaveLength(1);
+        expect(entries[0].score).toBe(42);
+      }
+      expect(zrevrangeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      zrevrangeSpy.mockRestore();
+    }
+  });
 });

@@ -3,6 +3,7 @@ import {
   Get,
   Inject,
   Logger,
+  OnApplicationShutdown,
   Req,
   Res,
   UseGuards,
@@ -20,12 +21,15 @@ import {
   LeaderboardUpdatesEmitter,
 } from '../../../infrastructure/messaging/nats/leaderboard-updates.emitter';
 
+const SHUTDOWN_FRAME = 'event: shutdown\ndata: {"reason":"graceful"}\n\n';
+
 @Controller('v1/leaderboard')
 @UseGuards(JwtGuard)
-export class LeaderboardStreamController {
+export class LeaderboardStreamController implements OnApplicationShutdown {
   private static currentConnections = 0;
 
   private readonly logger = new Logger(LeaderboardStreamController.name);
+  private readonly openStreams = new Set<FastifyReply>();
 
   constructor(
     @Inject(LEADERBOARD_CACHE_TOKEN) private readonly cache: LeaderboardCache,
@@ -52,6 +56,7 @@ export class LeaderboardStreamController {
     }
 
     LeaderboardStreamController.currentConnections += 1;
+    this.openStreams.add(reply);
 
     // Set SSE headers via reply.raw — bypasses Fastify's serialization
     reply.raw.setHeader('Content-Type', 'text/event-stream');
@@ -118,6 +123,7 @@ export class LeaderboardStreamController {
       clearInterval(slowClientTimer);
       unsubscribe();
       LeaderboardStreamController.currentConnections -= 1;
+      this.openStreams.delete(reply);
       try {
         reply.raw.end();
       } catch {
@@ -172,5 +178,19 @@ export class LeaderboardStreamController {
     // Listen for disconnect
     req.raw.on('close', cleanup);
     req.raw.on('error', cleanup);
+  }
+
+  onApplicationShutdown(signal?: string): void {
+    const count = this.openStreams.size;
+    for (const reply of this.openStreams) {
+      try {
+        reply.raw.write(SHUTDOWN_FRAME);
+        reply.raw.end();
+      } catch {
+        // Already closed — skip silently
+      }
+    }
+    this.openStreams.clear();
+    this.logger.log({ signal, count }, 'sse streams closed');
   }
 }

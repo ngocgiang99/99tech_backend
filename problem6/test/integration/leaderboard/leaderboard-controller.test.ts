@@ -83,9 +83,9 @@ function makeResMock(): { header: jest.Mock } {
 
 describe('LeaderboardController (thin controller tests)', () => {
   // -------------------------------------------------------------------------
-  // Test 1: cache hit — returns from cache, no DB query
+  // Test 1: HIT path — returns from cache, no DB query, X-Cache-Status: hit
   // -------------------------------------------------------------------------
-  test('Test 1: cache hit — returns entries from cache with generatedAt, no DB fallback', async () => {
+  test('Test 1: HIT path — entries from cache, X-Cache-Status: hit, no DB fallback', async () => {
     const entries = [
       makeEntry(1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 500),
       makeEntry(2, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 400),
@@ -104,15 +104,20 @@ describe('LeaderboardController (thin controller tests)', () => {
     expect(typeof result.generatedAt).toBe('string');
     // DB should NOT have been queried on a cache hit
     expect((db.selectFrom as jest.Mock).mock.calls).toHaveLength(0);
-    // No X-Cache-Status header on cache hit
-    expect(res.header).not.toHaveBeenCalled();
+    expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'hit');
   });
 
   // -------------------------------------------------------------------------
-  // Test 2: empty cache — falls back to Postgres, sets X-Cache-Status header
+  // Test 2: MISS path — cache throws, Postgres fallback, X-Cache-Status: miss
+  // (Empty cache response is now a legitimate HIT per Decision 9; only a
+  //  thrown Redis error reaches the fallback.)
   // -------------------------------------------------------------------------
-  test('Test 2: empty cache → falls back to Postgres, sets X-Cache-Status: miss-fallback', async () => {
-    const cache = makeCacheMock([]); // cache returns empty array
+  test('Test 2: MISS path — cache throws → Postgres fallback, X-Cache-Status: miss', async () => {
+    const cache: LeaderboardCache = {
+      upsert: jest.fn(),
+      getTop: jest.fn().mockRejectedValue(new Error('Redis unreachable')),
+      getRank: jest.fn().mockResolvedValue(null),
+    };
     const dbRows = [
       {
         user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
@@ -135,25 +140,17 @@ describe('LeaderboardController (thin controller tests)', () => {
     );
 
     expect(result.entries).toHaveLength(2);
-    expect(
-      (
-        result.entries as Array<{ rank: number; userId: string; score: number }>
-      )[0].rank,
-    ).toBe(1);
-    expect(
-      (
-        result.entries as Array<{ rank: number; userId: string; score: number }>
-      )[0].score,
-    ).toBe(300);
-    expect(
-      (
-        result.entries as Array<{ rank: number; userId: string; score: number }>
-      )[1].rank,
-    ).toBe(2);
+    const e = result.entries as Array<{
+      rank: number;
+      userId: string;
+      score: number;
+    }>;
+    expect(e[0].rank).toBe(1);
+    expect(e[0].score).toBe(300);
+    expect(e[1].rank).toBe(2);
     expect(typeof result.generatedAt).toBe('string');
 
-    // X-Cache-Status: miss-fallback header must be set
-    expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'miss-fallback');
+    expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'miss');
     // DB WAS queried
     expect((db.selectFrom as jest.Mock).mock.calls).toHaveLength(1);
   });

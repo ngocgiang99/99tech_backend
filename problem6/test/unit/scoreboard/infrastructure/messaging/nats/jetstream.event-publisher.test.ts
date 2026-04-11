@@ -11,9 +11,13 @@ function makeJsMock(publishImpl: jest.Mock) {
   };
 }
 
-function makeNatsConnection(jsMock: ReturnType<typeof makeJsMock>) {
+function makeNatsConnection(
+  jsMock: ReturnType<typeof makeJsMock>,
+  drainMock?: jest.Mock,
+) {
   return {
     jetstream: jest.fn().mockReturnValue(jsMock),
+    drain: drainMock ?? jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -52,7 +56,9 @@ describe('JetStreamEventPublisher', () => {
       expect(options.msgID).toBe('msg-001');
 
       // The encoded payload should be valid JSON containing the original payload
-      const decoded = JSON.parse(Buffer.from(encodedPayload).toString('utf8')) as Record<string, unknown>;
+      const decoded = JSON.parse(
+        Buffer.from(encodedPayload).toString('utf8'),
+      ) as Record<string, unknown>;
       expect(decoded).toEqual({ userId: 'user-1', delta: 100 });
     });
   });
@@ -105,6 +111,44 @@ describe('JetStreamEventPublisher', () => {
 
       expect(caughtError).toBeInstanceOf(JetStreamPublishError);
       expect(caughtError?.cause).toBe(originalError);
+    });
+  });
+
+  describe('onApplicationShutdown', () => {
+    it('drains the NATS connection on first call', async () => {
+      const drain = jest.fn().mockResolvedValue(undefined);
+      const js = makeJsMock(jest.fn());
+      const nc = makeNatsConnection(js, drain);
+
+      const publisher = new JetStreamEventPublisher(nc as never);
+      await publisher.onApplicationShutdown('SIGTERM');
+
+      expect(drain).toHaveBeenCalledTimes(1);
+    });
+
+    it('is idempotent — second call does not call drain again', async () => {
+      const drain = jest.fn().mockResolvedValue(undefined);
+      const js = makeJsMock(jest.fn());
+      const nc = makeNatsConnection(js, drain);
+
+      const publisher = new JetStreamEventPublisher(nc as never);
+      await publisher.onApplicationShutdown('SIGTERM');
+      await publisher.onApplicationShutdown('SIGTERM');
+
+      expect(drain).toHaveBeenCalledTimes(1);
+    });
+
+    it('swallows drain errors (e.g. connection already draining)', async () => {
+      const drain = jest
+        .fn()
+        .mockRejectedValue(new Error('connection already closing'));
+      const js = makeJsMock(jest.fn());
+      const nc = makeNatsConnection(js, drain);
+
+      const publisher = new JetStreamEventPublisher(nc as never);
+      await expect(
+        publisher.onApplicationShutdown('SIGTERM'),
+      ).resolves.toBeUndefined();
     });
   });
 });

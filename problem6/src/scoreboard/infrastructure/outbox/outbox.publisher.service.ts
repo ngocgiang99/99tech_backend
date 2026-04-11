@@ -43,6 +43,7 @@ export class OutboxPublisherService
 
   private running = false;
   private isLeader = false;
+  private shutdownCompleted = false;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private lastPublishedTop10: string | null = null;
   private leaderboardBuffer: OutboxRow[] = [];
@@ -287,9 +288,13 @@ export class OutboxPublisherService
     }
   }
 
-  async onApplicationShutdown(): Promise<void> {
+  async onApplicationShutdown(signal?: string): Promise<void> {
+    if (this.shutdownCompleted) {
+      return;
+    }
+    this.shutdownCompleted = true;
     this.logger.log(
-      { instanceId: this.instanceId },
+      { instanceId: this.instanceId, signal },
       'outbox publisher shutting down',
     );
     this.running = false;
@@ -307,13 +312,14 @@ export class OutboxPublisherService
       const val = await this.redis.get(OUTBOX_LOCK_KEY);
       if (val === this.instanceId) {
         await this.redis.del(OUTBOX_LOCK_KEY);
-        this.logger.log(
-          { instanceId: this.instanceId },
-          'outbox lock released on shutdown',
-        );
       }
     } catch (e) {
       this.logger.warn({ err: e }, 'outbox lock release failed on shutdown');
     }
+
+    this.logger.log(
+      { signal, instanceId: this.instanceId, count: 0 },
+      'outbox publisher stopped',
+    );
   }
 }

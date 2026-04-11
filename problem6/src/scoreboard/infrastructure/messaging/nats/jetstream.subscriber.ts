@@ -100,8 +100,7 @@ export class JetStreamSubscriber
     }
   }
 
-  async onApplicationShutdown(): Promise<void> {
-    this.logger.log('jetstream subscriber shutting down');
+  async onApplicationShutdown(signal?: string): Promise<void> {
     this.abortController?.abort();
     this.messages?.stop();
 
@@ -118,16 +117,18 @@ export class JetStreamSubscriber
     if (this.consumer) {
       try {
         await this.consumer.delete();
-        this.logger.log(
-          { consumerName: this.consumerName },
-          'ephemeral consumer deleted',
-        );
       } catch (e) {
         this.logger.debug(
           { err: e },
           'consumer delete failed (probably already cleaned up)',
         );
       }
+      this.consumer = null;
     }
+
+    this.logger.log(
+      { signal, consumerName: this.consumerName },
+      'jetstream subscriber unsubscribed',
+    );
   }
 }

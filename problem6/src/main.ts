@@ -15,6 +15,8 @@ import { ConfigService } from './config';
 import { registerRequestIdHook, resolveRequestId } from './shared/logger';
 import { MetricsInterceptor, processStartTimeSeconds } from './shared/metrics';
 
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+
 async function bootstrap(): Promise<void> {
   await initTracing();
 
@@ -42,12 +44,33 @@ async function bootstrap(): Promise<void> {
   // Global metrics interceptor: records HTTP request count and duration for every request.
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
 
+  // Enable NestJS lifecycle shutdown hooks (OnApplicationShutdown) so each
+  // stateful adapter can release its external resources on SIGTERM/SIGINT.
+  // See openspec/changes/add-runtime-resilience-utilities/design.md Decision 6.
+  app.enableShutdownHooks();
+
   // Boot-time metric: set process start time once before listening.
   processStartTimeSeconds.set(Date.now() / 1000);
 
   const config = app.get(ConfigService);
   const port = config.get('PORT');
   await app.listen({ host: '0.0.0.0', port });
+}
+
+// Shutdown-timeout sentinel (Decision 7). NestJS's enableShutdownHooks() runs
+// each adapter's onApplicationShutdown in parallel with this timer. The timer
+// fires only if teardown exceeds SHUTDOWN_TIMEOUT_MS, and it's .unref()'d so
+// a clean drain does not keep the event loop alive.
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    const forceExitTimer = setTimeout(() => {
+      console.warn(
+        `[shutdown] ${signal}: exceeded ${SHUTDOWN_TIMEOUT_MS}ms timeout — forcing exit`,
+      );
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+    forceExitTimer.unref?.();
+  });
 }
 
 void bootstrap();

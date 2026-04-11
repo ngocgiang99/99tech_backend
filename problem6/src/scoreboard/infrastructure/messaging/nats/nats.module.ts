@@ -1,8 +1,9 @@
 import {
   Global,
   Inject,
+  Logger,
   Module,
-  OnModuleDestroy,
+  OnApplicationShutdown,
   Provider,
 } from '@nestjs/common';
 import type { NatsConnection } from 'nats';
@@ -50,10 +51,36 @@ const domainEventPublisherProvider: Provider = {
     JetStreamSubscriber,
   ],
 })
-export class NatsModule implements OnModuleDestroy {
+export class NatsModule implements OnApplicationShutdown {
+  private readonly logger = new Logger(NatsModule.name);
+  private closed = false;
+
   constructor(@Inject(NATS_CONNECTION) private readonly nc: NatsConnection) {}
 
-  async onModuleDestroy(): Promise<void> {
-    await this.nc.drain();
+  // drain() is idempotent and safe to call even if the JetStreamEventPublisher
+  // has already drained — the NATS client marks itself draining/closed on the
+  // first call, so subsequent drain()s no-op (or throw, which we swallow).
+  async onApplicationShutdown(signal?: string): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+    try {
+      await this.nc.drain();
+    } catch (e) {
+      this.logger.debug(
+        { err: e, signal },
+        'nats drain no-op (already draining)',
+      );
+    }
+    try {
+      await this.nc.close();
+    } catch (e) {
+      this.logger.debug(
+        { err: e, signal },
+        'nats close no-op (already closed)',
+      );
+    }
+    this.logger.log({ signal }, 'nats client closed');
   }
 }
