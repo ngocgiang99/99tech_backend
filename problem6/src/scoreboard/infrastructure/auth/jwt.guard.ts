@@ -1,13 +1,9 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import * as jose from 'jose';
 import { trace, SpanStatusCode } from '@opentelemetry/api';
 
 import { ConfigService } from '../../../config';
+import { UnauthenticatedError } from '../../shared/errors';
 
 // TODO: add INTERNAL_JWT_SECRET_PREV before production release — see archived change replace-jwks-with-internal-hs256 design.md Decision 1
 
@@ -31,12 +27,12 @@ export class JwtGuard implements CanActivate {
         authHeader?.['authorization'] ?? authHeader?.['Authorization'];
 
       if (!authorization) {
-        throw new UnauthorizedException('Unauthorized');
+        throw new UnauthenticatedError('Unauthorized');
       }
 
       const parts = authorization.split(' ');
       if (parts.length !== 2 || parts[0] !== 'Bearer') {
-        throw new UnauthorizedException('Unauthorized');
+        throw new UnauthenticatedError('Unauthorized');
       }
 
       const token = parts[1];
@@ -51,11 +47,11 @@ export class JwtGuard implements CanActivate {
           const decoded = Buffer.from(padded, 'base64').toString('utf8');
           const parsed = JSON.parse(decoded) as Record<string, unknown>;
           if (parsed['alg'] === 'none') {
-            throw new UnauthorizedException('Unauthorized');
+            throw new UnauthenticatedError('Unauthorized');
           }
         } catch (parseErr) {
-          if (parseErr instanceof UnauthorizedException) throw parseErr;
-          throw new UnauthorizedException('Unauthorized');
+          if (parseErr instanceof UnauthenticatedError) throw parseErr;
+          throw new UnauthenticatedError('Unauthorized');
         }
       }
 
@@ -82,8 +78,8 @@ export class JwtGuard implements CanActivate {
       request['userId'] = payload.sub;
       return true;
     } catch (err) {
-      if (err instanceof UnauthorizedException) throw err;
-      throw new UnauthorizedException('Unauthorized');
+      if (err instanceof UnauthenticatedError) throw err;
+      throw new UnauthenticatedError('Unauthorized');
     }
   }
 }

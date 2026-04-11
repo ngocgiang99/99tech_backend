@@ -4,9 +4,11 @@ import { MetricsInterceptor } from './metrics.interceptor';
 import { registry } from './registry';
 import {
   actionTokenVerifyTotal,
+  errorsTotal,
   httpRequestDurationSeconds,
   httpRequestsTotal,
   METRIC_ACTION_TOKEN_VERIFY_TOTAL,
+  METRIC_ERRORS_TOTAL,
   METRIC_HTTP_REQUEST_DURATION_SECONDS,
   METRIC_HTTP_REQUESTS_TOTAL,
   METRIC_PROCESS_START_TIME_SECONDS,
@@ -65,6 +67,10 @@ import {
       provide: METRIC_RATE_LIMIT_FAILED_CLOSED_TOTAL,
       useValue: rateLimitFailedClosedTotal,
     },
+    {
+      provide: METRIC_ERRORS_TOTAL,
+      useValue: errorsTotal,
+    },
   ],
   exports: [
     MetricsInterceptor,
@@ -76,6 +82,7 @@ import {
     METRIC_RATE_LIMIT_HITS_TOTAL,
     METRIC_PROCESS_START_TIME_SECONDS,
     METRIC_RATE_LIMIT_FAILED_CLOSED_TOTAL,
+    METRIC_ERRORS_TOTAL,
   ],
 })
 export class MetricsModule {}

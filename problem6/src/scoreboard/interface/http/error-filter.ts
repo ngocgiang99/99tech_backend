@@ -1,157 +1,78 @@
+import * as crypto from 'node:crypto';
 import {
   ArgumentsHost,
   Catch,
   ExceptionFilter,
-  HttpException,
+  Inject,
   Logger,
 } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { ZodError } from 'zod';
+import type { Counter } from 'prom-client';
 
-import { InvalidArgumentError } from '../../domain/errors/invalid-argument.error';
+import { METRIC_ERRORS_TOTAL } from '../../../shared/metrics/write-path-metrics';
+import {
+  buildErrorMetadata,
+  toPublicResponse,
+  wrapUnknown,
+} from '../../shared/errors';
 
-// NOTE: The following domain error classes do not yet exist in this codebase
-// (NotFoundError, ConflictError, UnauthorizedError, ForbiddenError). They are
-// listed here as placeholders. When those classes are added, import them and
-// add instanceof checks in the switch-like block below.
-
-interface ErrorEnvelope {
-  error: {
-    code: string;
-    message: string;
-    requestId: string | null;
-    hint?: string | null;
-  };
-}
-
-function deriveHttpExceptionCode(status: number): string {
-  switch (status) {
-    case 400:
-      return 'BAD_REQUEST';
-    case 401:
-      return 'UNAUTHENTICATED';
-    case 403:
-      return 'FORBIDDEN';
-    case 404:
-      return 'NOT_FOUND';
-    case 409:
-      return 'CONFLICT';
-    case 429:
-      return 'RATE_LIMITED';
-    case 503:
-      return 'TEMPORARILY_UNAVAILABLE';
-    default:
-      return status >= 500 ? 'INTERNAL_ERROR' : 'HTTP_ERROR';
-  }
-}
-
-// GAP-03 / Decision 1 — Redis SPOF fail-CLOSED. When ioredis throws due to a
-// Redis outage (max-retries, connection refused/reset/timeout), every request
-// that touches Redis MUST surface as 503 TEMPORARILY_UNAVAILABLE, not 500.
-// This keeps the fail-closed contract uniform across the entire write path.
-function isRedisInfrastructureError(err: Error): boolean {
-  if (err.name === 'MaxRetriesPerRequestError' || err.name === 'AbortError') {
-    return true;
-  }
-  const msg = err.message;
-  return (
-    msg.includes('Reached the max retries per request') ||
-    msg.includes('Connection is closed') ||
-    msg.includes('ECONNREFUSED') ||
-    msg.includes('ENOTFOUND') ||
-    msg.includes('ETIMEDOUT')
-  );
-}
-
+/**
+ * Global HTTP exception filter.
+ *
+ * Every thrown value reaches this filter and is routed through a single
+ * pipeline — no branching, no instanceof checks. The pipeline:
+ *
+ *   1. headersSent idempotency guard
+ *   2. wrapUnknown()      → DomainError
+ *   3. crypto.randomUUID  → errorId (used only if status >= 500)
+ *   4. buildErrorMetadata → structured log payload
+ *   5. logger.{warn|error}(metadata, 'Request error')
+ *   6. errorsTotal.inc({code, status})
+ *   7. toPublicResponse   → public envelope (errorId hidden for <500)
+ *   8. reply.status(...).send(body)
+ *
+ * Classification logic lives in `wrapUnknown`. Envelope shape lives in
+ * `toPublicResponse`. Metadata extraction lives in `buildErrorMetadata`.
+ * This filter is pure orchestration.
+ */
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
+
+  constructor(
+    @Inject(METRIC_ERRORS_TOTAL)
+    private readonly errorsTotal: Counter<'code' | 'status'>,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const request = ctx.getRequest<FastifyRequest & { requestId?: string }>();
     const reply = ctx.getResponse<FastifyReply>();
 
-    const requestId = request.requestId ?? null;
-
-    let status: number;
-    let code: string;
-    let safeMessage: string;
-    const hint: string | null = null;
-
-    if (exception instanceof ZodError) {
-      status = 400;
-      code = 'INVALID_ARGUMENT';
-      safeMessage = exception.issues.map((issue) => issue.message).join('; ');
-    } else if (exception instanceof InvalidArgumentError) {
-      status = 400;
-      code = 'INVALID_ARGUMENT';
-      safeMessage = exception.message;
-    } else if (exception instanceof HttpException) {
-      // NestJS-wrapped HTTP exceptions (including those thrown by guards/pipes)
-      status = exception.getStatus();
-      code = deriveHttpExceptionCode(status);
-      // For client errors (4xx), the NestJS message is safe to forward.
-      // For server errors (5xx), use a generic message.
-      if (status >= 500) {
-        safeMessage = 'Internal server error';
-        this.logger.error(
-          `[${requestId}] HttpException ${status}: ${exception.message}`,
-          exception.stack,
-        );
-      } else {
-        const responseBody = exception.getResponse();
-        if (typeof responseBody === 'string') {
-          safeMessage = responseBody;
-        } else if (
-          typeof responseBody === 'object' &&
-          responseBody !== null &&
-          'message' in responseBody
-        ) {
-          const msg = (responseBody as { message: unknown }).message;
-          safeMessage = typeof msg === 'string' ? msg : JSON.stringify(msg);
-        } else {
-          safeMessage = exception.message;
-        }
-      }
-    } else if (
-      exception instanceof Error &&
-      isRedisInfrastructureError(exception)
-    ) {
-      status = 503;
-      code = 'TEMPORARILY_UNAVAILABLE';
-      safeMessage = 'Service temporarily unavailable';
-      this.logger.error(
-        `[${requestId}] Redis infrastructure error (fail-CLOSED): ${exception.message}`,
-        exception.stack,
-      );
-    } else if (exception instanceof Error) {
-      // Unhandled domain / infrastructure errors → 500
-      status = 500;
-      code = 'INTERNAL_ERROR';
-      safeMessage = 'Internal server error';
-      this.logger.error(
-        `[${requestId}] Unhandled error: ${exception.message}`,
-        exception.stack,
-      );
-    } else {
-      status = 500;
-      code = 'INTERNAL_ERROR';
-      safeMessage = 'Internal server error';
-      this.logger.error(
-        `[${requestId}] Unknown thrown value: ${String(exception)}`,
-      );
+    if (reply.raw.headersSent) {
+      return;
     }
 
-    const envelope: ErrorEnvelope = {
-      error: {
-        code,
-        message: safeMessage,
-        requestId,
-        hint,
-      },
-    };
+    const appErr = wrapUnknown(exception);
+    const errorId = crypto.randomUUID();
+    const status = appErr.getStatus();
+    const metadata = buildErrorMetadata(appErr, request, errorId);
 
-    void reply.status(status).send(envelope);
+    if (status >= 500) {
+      this.logger.error(metadata, 'Request error');
+    } else {
+      this.logger.warn(metadata, 'Request error');
+    }
+
+    this.errorsTotal.inc({ code: appErr.code, status: String(status) });
+
+    const requestId = request.requestId ?? null;
+    const { status: envelopeStatus, body } = toPublicResponse(
+      appErr,
+      requestId,
+      status >= 500 ? errorId : null,
+    );
+
+    void reply.status(envelopeStatus).send(body);
   }
 }

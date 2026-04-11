@@ -19,6 +19,7 @@ export const METRIC_PROCESS_START_TIME_SECONDS =
   'metric.scoreboard_process_start_time_seconds';
 export const METRIC_RATE_LIMIT_FAILED_CLOSED_TOTAL =
   'metric.scoreboard_rate_limit_failed_closed_total';
+export const METRIC_ERRORS_TOTAL = 'metric.scoreboard_errors_total';
 
 /**
  * HTTP request counter — incremented per completed request.
@@ -94,5 +95,22 @@ export const rateLimitFailedClosedTotal = new Counter({
 export const processStartTimeSeconds = new Gauge({
   name: 'scoreboard_process_start_time_seconds',
   help: 'Unix timestamp (seconds) at which the scoreboard process started',
+  registers: [registry],
+});
+
+/**
+ * Error counter — incremented on every error that reaches HttpExceptionFilter.
+ * Labels:
+ *   code   — ErrorCode union value (stable machine-readable code)
+ *   status — HTTP status as a string ('400', '401', ..., '503', '500')
+ *
+ * Cardinality is bounded (~90 series max, ~15 realistic) — no per-user or
+ * per-route labels. For per-route error analysis, cross-reference via the
+ * existing scoreboard_http_requests_total metric using requestId.
+ */
+export const errorsTotal = new Counter({
+  name: 'scoreboard_errors_total',
+  help: 'Total errors surfaced by the scoreboard HTTP filter, by code and status',
+  labelNames: ['code', 'status'] as const,
   registers: [registry],
 });

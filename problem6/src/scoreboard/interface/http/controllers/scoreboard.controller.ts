@@ -3,7 +3,6 @@ import {
   Controller,
   HttpCode,
   Inject,
-  InternalServerErrorException,
   Post,
   Req,
   UseGuards,
@@ -24,6 +23,7 @@ import { UserId } from '../../../domain/value-objects/user-id';
 import { ActionTokenGuard } from '../../../infrastructure/auth/action-token.guard';
 import { JwtGuard } from '../../../infrastructure/auth/jwt.guard';
 import { RateLimitGuard } from '../../../infrastructure/rate-limit/rate-limit.guard';
+import { InternalError } from '../../../shared/errors';
 import { METRIC_SCORE_INCREMENT_TOTAL } from '../../../../shared/metrics';
 import { IncrementScoreSchema } from '../dto/increment-score.dto';
 
@@ -81,14 +81,9 @@ export class ScoreboardController {
         // Edge case: Postgres row is gone (DB wiped between original credit and replay).
         // Document: acceptable gap for MVP — step-05 outbox will harden this.
         // Fall through to a 500 rather than silently returning wrong data.
-        throw new InternalServerErrorException({
-          error: {
-            code: 'INTERNAL_ERROR',
-            message: 'Prior credit record not found for idempotent replay',
-            requestId: null,
-            hint: null,
-          },
-        });
+        throw new InternalError(
+          'Prior credit record not found for idempotent replay',
+        );
       }
 
       // All other errors propagate to the global HttpExceptionFilter.

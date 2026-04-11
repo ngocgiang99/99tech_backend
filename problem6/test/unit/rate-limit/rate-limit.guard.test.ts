@@ -110,7 +110,7 @@ describe('RateLimitGuard', () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       expect(ex.getStatus()).toBe(429);
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      expect(ex.getResponse().code).toBe('RATE_LIMITED');
+      expect(ex.getResponse().code).toBe('RATE_LIMIT');
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       expect(response.header).toHaveBeenCalledWith('Retry-After', '1');
       expect(hitsCounter.inc).toHaveBeenCalledWith({ outcome: 'rejected' });

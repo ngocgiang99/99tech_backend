@@ -1,18 +1,11 @@
-import {
-  BadRequestException,
-  Controller,
-  Get,
-  Inject,
-  Query,
-  Res,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Inject, Query, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 
 import { DATABASE } from '../../../../database';
 import type { Database } from '../../../../database';
 import type { LeaderboardCache } from '../../../domain/ports/leaderboard-cache';
 import { JwtGuard } from '../../../infrastructure/auth/jwt.guard';
+import { ValidationError } from '../../../shared/errors';
 import { LeaderboardTopQuerySchema } from '../dto/leaderboard.dto';
 
 @Controller('v1/leaderboard')
@@ -30,8 +23,9 @@ export class LeaderboardController {
   ): Promise<{ entries: unknown[]; generatedAt: string }> {
     const result = LeaderboardTopQuerySchema.safeParse(query);
     if (!result.success) {
-      throw new BadRequestException(
+      throw new ValidationError(
         result.error.issues.map((i) => i.message).join('; '),
+        result.error.issues,
       );
     }
     const parsed = result.data;

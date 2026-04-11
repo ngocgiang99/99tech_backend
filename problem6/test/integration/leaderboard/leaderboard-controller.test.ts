@@ -21,7 +21,7 @@ jest.mock('jose', () => ({
   errors: { JOSEError: class JOSEError extends Error {} },
 }));
 
-import { BadRequestException } from '@nestjs/common';
+import { ValidationError } from '../../../src/scoreboard/shared/errors';
 
 import { LeaderboardController } from '../../../src/scoreboard/interface/http/controllers/leaderboard.controller';
 import type {
@@ -159,9 +159,9 @@ describe('LeaderboardController (thin controller tests)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 3: limit > 100 → BadRequestException (400)
+  // Test 3: limit > 100 → ValidationError (400)
   // -------------------------------------------------------------------------
-  test('Test 3: limit=101 → BadRequestException', async () => {
+  test('Test 3: limit=101 → ValidationError', async () => {
     const cache = makeCacheMock([]);
     const db = makeDbMock([]);
     const controller = new LeaderboardController(cache, db);
@@ -169,13 +169,13 @@ describe('LeaderboardController (thin controller tests)', () => {
 
     await expect(
       controller.getTop({ limit: '101' } as unknown, res as never),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ValidationError);
   });
 
   // -------------------------------------------------------------------------
-  // Test 4: limit < 1 → BadRequestException (400)
+  // Test 4: limit < 1 → ValidationError (400)
   // -------------------------------------------------------------------------
-  test('Test 4: limit=0 → BadRequestException', async () => {
+  test('Test 4: limit=0 → ValidationError', async () => {
     const cache = makeCacheMock([]);
     const db = makeDbMock([]);
     const controller = new LeaderboardController(cache, db);
@@ -183,7 +183,7 @@ describe('LeaderboardController (thin controller tests)', () => {
 
     await expect(
       controller.getTop({ limit: '0' } as unknown, res as never),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ValidationError);
   });
 
   // -------------------------------------------------------------------------

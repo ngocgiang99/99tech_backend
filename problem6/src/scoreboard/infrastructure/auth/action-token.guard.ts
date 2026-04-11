@@ -1,7 +1,6 @@
 import {
   CanActivate,
   ExecutionContext,
-  ForbiddenException,
   Inject,
   Injectable,
 } from '@nestjs/common';
@@ -11,6 +10,7 @@ import type { Counter } from 'prom-client';
 
 import { ConfigService } from '../../../config';
 import { METRIC_ACTION_TOKEN_VERIFY_TOTAL } from '../../../shared/metrics';
+import { ForbiddenError } from '../../shared/errors';
 
 import { ActionTokenClaims } from './action-token.types';
 import { InvalidActionTokenError } from './errors';
@@ -54,10 +54,10 @@ export class ActionTokenGuard implements CanActivate {
     } catch (err) {
       if (err instanceof InvalidActionTokenError) {
         this.actionTokenVerifyTotal.inc({ outcome: 'invalid' });
-        throw new ForbiddenException('INVALID_ACTION_TOKEN');
+        throw new ForbiddenError('INVALID_ACTION_TOKEN');
       }
       this.actionTokenVerifyTotal.inc({ outcome: 'invalid' });
-      throw new ForbiddenException('INVALID_ACTION_TOKEN');
+      throw new ForbiddenError('INVALID_ACTION_TOKEN');
     }
 
     const ttl = this.config.get('ACTION_TOKEN_TTL_SECONDS');
@@ -84,7 +84,7 @@ export class ActionTokenGuard implements CanActivate {
 
     if (result === null) {
       this.actionTokenVerifyTotal.inc({ outcome: 'consumed' });
-      throw new ForbiddenException('ACTION_ALREADY_CONSUMED');
+      throw new ForbiddenError('ACTION_ALREADY_CONSUMED');
     }
 
     this.actionTokenVerifyTotal.inc({ outcome: 'ok' });

@@ -1,8 +1,6 @@
 import {
   CanActivate,
   ExecutionContext,
-  HttpException,
-  HttpStatus,
   Inject,
   Injectable,
   Logger,
@@ -15,6 +13,10 @@ import {
   METRIC_RATE_LIMIT_FAILED_CLOSED_TOTAL,
   METRIC_RATE_LIMIT_HITS_TOTAL,
 } from '../../../shared/metrics';
+import {
+  DependencyUnavailableError,
+  RateLimitError,
+} from '../../shared/errors';
 
 import { RedisTokenBucket } from './redis-token-bucket';
 
@@ -48,10 +50,7 @@ export class RateLimitGuard implements CanActivate {
 
     if (globalCount > GLOBAL_LIMIT) {
       this.rateLimitHitsTotal.inc({ outcome: 'circuit_open' });
-      throw new HttpException(
-        { statusCode: 503, code: 'TEMPORARILY_UNAVAILABLE' },
-        503,
-      );
+      throw new DependencyUnavailableError('Global rate limit circuit open');
     }
 
     const http = ctx.switchToHttp();
@@ -77,13 +76,9 @@ export class RateLimitGuard implements CanActivate {
         { err },
         '[RateLimitGuard] Redis error, failing closed',
       );
-      throw new HttpException(
-        {
-          statusCode: HttpStatus.SERVICE_UNAVAILABLE,
-          code: 'TEMPORARILY_UNAVAILABLE',
-          message: 'Rate limit service temporarily unavailable',
-        },
-        HttpStatus.SERVICE_UNAVAILABLE,
+      throw new DependencyUnavailableError(
+        'Rate limit service temporarily unavailable',
+        { cause: err },
       );
     }
 
@@ -94,7 +89,7 @@ export class RateLimitGuard implements CanActivate {
           : 1;
       void response.header('Retry-After', String(retryAfterSeconds));
       this.rateLimitHitsTotal.inc({ outcome: 'rejected' });
-      throw new HttpException({ statusCode: 429, code: 'RATE_LIMITED' }, 429);
+      throw new RateLimitError('Too many requests');
     }
 
     this.rateLimitHitsTotal.inc({ outcome: 'allowed' });

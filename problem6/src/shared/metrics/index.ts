@@ -9,6 +9,7 @@ export {
   METRIC_RATE_LIMIT_HITS_TOTAL,
   METRIC_PROCESS_START_TIME_SECONDS,
   METRIC_RATE_LIMIT_FAILED_CLOSED_TOTAL,
+  METRIC_ERRORS_TOTAL,
   httpRequestsTotal,
   httpRequestDurationSeconds,
   scoreIncrementTotal,
@@ -16,4 +17,5 @@ export {
   rateLimitHitsTotal,
   processStartTimeSeconds,
   rateLimitFailedClosedTotal,
+  errorsTotal,
 } from './write-path-metrics';

@@ -11,6 +11,7 @@ import type {
   ScoreEventRecord,
   UserScoreRepository,
 } from '../../../domain/ports/user-score.repository';
+import { mapDbError } from '../../../shared/errors';
 import { UserScore } from '../../../domain/user-score.aggregate';
 import { ActionId } from '../../../domain/value-objects/action-id';
 import { UserId } from '../../../domain/value-objects/user-id';
@@ -27,11 +28,16 @@ export class KyselyUserScoreRepository implements UserScoreRepository {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
   async findByUserId(userId: UserId): Promise<UserScore | null> {
-    const row = await this.db
-      .selectFrom('user_scores')
-      .where('user_id', '=', userId.value)
-      .selectAll()
-      .executeTakeFirst();
+    let row;
+    try {
+      row = await this.db
+        .selectFrom('user_scores')
+        .where('user_id', '=', userId.value)
+        .selectAll()
+        .executeTakeFirst();
+    } catch (err) {
+      throw mapDbError(err);
+    }
 
     if (!row) {
       return null;
@@ -54,18 +60,23 @@ export class KyselyUserScoreRepository implements UserScoreRepository {
     // v1 simplification (design.md Decision 4): totalScoreAfter reads the CURRENT
     // user_scores.total_score, not the total at the time of the original credit.
     // Post-credit drift is accepted for MVP — the replay path only needs an approximate score.
-    const row = await this.db
-      .selectFrom('score_events as se')
-      .innerJoin('user_scores as us', 'us.user_id', 'se.user_id')
-      .where('se.action_id', '=', actionId.value)
-      .select([
-        'se.action_id',
-        'se.user_id',
-        'se.delta',
-        'se.created_at',
-        'us.total_score',
-      ])
-      .executeTakeFirst();
+    let row;
+    try {
+      row = await this.db
+        .selectFrom('score_events as se')
+        .innerJoin('user_scores as us', 'us.user_id', 'se.user_id')
+        .where('se.action_id', '=', actionId.value)
+        .select([
+          'se.action_id',
+          'se.user_id',
+          'se.delta',
+          'se.created_at',
+          'us.total_score',
+        ])
+        .executeTakeFirst();
+    } catch (err) {
+      throw mapDbError(err);
+    }
 
     if (!row) {
       return null;

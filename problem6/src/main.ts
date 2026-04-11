@@ -14,7 +14,6 @@ import { AppModule } from './app.module';
 import { ConfigService } from './config';
 import { registerRequestIdHook, resolveRequestId } from './shared/logger';
 import { MetricsInterceptor, processStartTimeSeconds } from './shared/metrics';
-import { HttpExceptionFilter } from './scoreboard/interface/http/error-filter';
 
 async function bootstrap(): Promise<void> {
   await initTracing();
@@ -37,8 +36,8 @@ async function bootstrap(): Promise<void> {
 
   await app.register(helmet);
 
-  // Global exception filter: normalizes all unhandled errors into the standard envelope.
-  app.useGlobalFilters(new HttpExceptionFilter());
+  // Global exception filter is registered via APP_FILTER in AppModule so that
+  // NestJS constructs it through DI and can inject the errors_total counter.
 
   // Global metrics interceptor: records HTTP request count and duration for every request.
   app.useGlobalInterceptors(app.get(MetricsInterceptor));

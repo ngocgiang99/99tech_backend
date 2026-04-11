@@ -9,11 +9,12 @@ jest.mock('jose', () => ({
   errors: {},
 }));
 
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { ExecutionContext } from '@nestjs/common';
 
 import { ActionTokenGuard } from '../../../src/scoreboard/infrastructure/auth/action-token.guard';
 import { ActionTokenClaims } from '../../../src/scoreboard/infrastructure/auth/action-token.types';
 import { InvalidActionTokenError } from '../../../src/scoreboard/infrastructure/auth/errors';
+import { ForbiddenError } from '../../../src/scoreboard/shared/errors';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -134,13 +135,13 @@ describe('ActionTokenGuard', () => {
       const { ctx } = buildCtx({ userId: null });
 
       const err = await catchError(() => guard.canActivate(ctx));
-      expect(err).not.toBeInstanceOf(ForbiddenException);
+      expect(err).not.toBeInstanceOf(ForbiddenError);
       expect(err.message).toContain('JwtGuard must run before ActionTokenGuard');
     });
   });
 
   describe('bad token', () => {
-    it('throws ForbiddenException(INVALID_ACTION_TOKEN) when verifier rejects', async () => {
+    it('throws ForbiddenError(INVALID_ACTION_TOKEN) when verifier rejects', async () => {
       const verifier = makeVerifier('reject');
       const redis = makeRedis('OK');
       const config = makeConfig();
@@ -149,14 +150,14 @@ describe('ActionTokenGuard', () => {
       const { ctx } = buildCtx();
       const err = await catchError(() => guard.canActivate(ctx));
 
-      expect(err).toBeInstanceOf(ForbiddenException);
-      const response = (err as ForbiddenException).getResponse() as Record<string, unknown>;
+      expect(err).toBeInstanceOf(ForbiddenError);
+      const response = (err as ForbiddenError).getResponse() as Record<string, unknown>;
       expect(response['message']).toBe('INVALID_ACTION_TOKEN');
     });
   });
 
   describe('wrong sub', () => {
-    it('throws ForbiddenException when verifier rejects sub mismatch', async () => {
+    it('throws ForbiddenError when verifier rejects sub mismatch', async () => {
       const verifier = {
         verify: jest.fn().mockRejectedValue(new InvalidActionTokenError('sub mismatch')),
       };
@@ -167,14 +168,14 @@ describe('ActionTokenGuard', () => {
       const { ctx } = buildCtx({ userId: 'user-2' });
       const err = await catchError(() => guard.canActivate(ctx));
 
-      expect(err).toBeInstanceOf(ForbiddenException);
-      const response = (err as ForbiddenException).getResponse() as Record<string, unknown>;
+      expect(err).toBeInstanceOf(ForbiddenError);
+      const response = (err as ForbiddenError).getResponse() as Record<string, unknown>;
       expect(response['message']).toBe('INVALID_ACTION_TOKEN');
     });
   });
 
   describe('wrong aid', () => {
-    it('throws ForbiddenException when verifier rejects aid mismatch', async () => {
+    it('throws ForbiddenError when verifier rejects aid mismatch', async () => {
       const verifier = {
         verify: jest.fn().mockRejectedValue(new InvalidActionTokenError('aid mismatch')),
       };
@@ -185,12 +186,12 @@ describe('ActionTokenGuard', () => {
       const { ctx } = buildCtx({ actionId: 'wrong-aid' });
       const err = await catchError(() => guard.canActivate(ctx));
 
-      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err).toBeInstanceOf(ForbiddenError);
     });
   });
 
   describe('mxd violation', () => {
-    it('throws ForbiddenException when verifier rejects delta > mxd', async () => {
+    it('throws ForbiddenError when verifier rejects delta > mxd', async () => {
       const verifier = {
         verify: jest.fn().mockRejectedValue(new InvalidActionTokenError('mxd too low')),
       };
@@ -201,7 +202,7 @@ describe('ActionTokenGuard', () => {
       const { ctx } = buildCtx({ delta: 9999 });
       const err = await catchError(() => guard.canActivate(ctx));
 
-      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err).toBeInstanceOf(ForbiddenError);
     });
   });
 
@@ -220,7 +221,7 @@ describe('ActionTokenGuard', () => {
   });
 
   describe('SETNX loss', () => {
-    it('throws ForbiddenException(ACTION_ALREADY_CONSUMED) when SETNX returns null', async () => {
+    it('throws ForbiddenError(ACTION_ALREADY_CONSUMED) when SETNX returns null', async () => {
       const verifier = makeVerifier('resolve');
       const redis = makeRedis(null);
       const config = makeConfig();
@@ -229,8 +230,8 @@ describe('ActionTokenGuard', () => {
       const { ctx } = buildCtx();
       const err = await catchError(() => guard.canActivate(ctx));
 
-      expect(err).toBeInstanceOf(ForbiddenException);
-      const response = (err as ForbiddenException).getResponse() as Record<string, unknown>;
+      expect(err).toBeInstanceOf(ForbiddenError);
+      const response = (err as ForbiddenError).getResponse() as Record<string, unknown>;
       expect(response['message']).toBe('ACTION_ALREADY_CONSUMED');
     });
   });

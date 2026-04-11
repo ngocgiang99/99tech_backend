@@ -7,7 +7,7 @@ jest.mock('jose', () => ({
   errors: { JOSEError: class JOSEError extends Error {} },
 }));
 
-import { BadRequestException } from '@nestjs/common';
+import { ValidationError } from '../../../../src/scoreboard/shared/errors';
 
 import { LeaderboardController } from '../../../../src/scoreboard/interface/http/controllers/leaderboard.controller';
 import type {
@@ -123,27 +123,27 @@ describe('LeaderboardController unit tests', () => {
     expect(res.header).toHaveBeenCalledWith('X-Cache-Status', 'miss-fallback');
   });
 
-  it('limit > 100 → BadRequestException', async () => {
+  it('limit > 100 → ValidationError', async () => {
     const controller = new LeaderboardController(
       makeCacheMock([]),
       makeDbMock([]),
     );
     await expect(
       controller.getTop({ limit: '101' } as unknown, makeResMock() as never),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ValidationError);
   });
 
-  it('limit < 1 → BadRequestException', async () => {
+  it('limit < 1 → ValidationError', async () => {
     const controller = new LeaderboardController(
       makeCacheMock([]),
       makeDbMock([]),
     );
     await expect(
       controller.getTop({ limit: '0' } as unknown, makeResMock() as never),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ValidationError);
   });
 
-  it('invalid string limit → BadRequestException', async () => {
+  it('invalid string limit → ValidationError', async () => {
     const controller = new LeaderboardController(
       makeCacheMock([]),
       makeDbMock([]),
@@ -153,7 +153,7 @@ describe('LeaderboardController unit tests', () => {
         { limit: 'notanumber' } as unknown,
         makeResMock() as never,
       ),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ValidationError);
   });
 
   it('no limit param → defaults to 10, cache.getTop called with 10', async () => {

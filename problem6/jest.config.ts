@@ -53,6 +53,16 @@ const config: Config = {
       functions: 100,
       statements: 100,
     },
+    // Error primitives — single source of truth for HTTP error surface.
+    // Branch threshold is 95 (not 100) because a few optional-chain defaults
+    // (e.g. `request.headers ?? {}`) are unreachable in practice but still
+    // counted as branches by Istanbul.
+    'src/scoreboard/shared/errors/**/*.ts': {
+      lines: 100,
+      branches: 95,
+      functions: 100,
+      statements: 100,
+    },
   },
 };
 

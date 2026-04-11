@@ -124,9 +124,10 @@ jest.mock('jose', () => {
 });
 
 import * as jose from 'jose';
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { ExecutionContext } from '@nestjs/common';
 
 import { JwtGuard } from '../../../src/scoreboard/infrastructure/auth/jwt.guard';
+import { UnauthenticatedError } from '../../../src/scoreboard/shared/errors';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -267,7 +268,7 @@ describe('JwtGuard', () => {
   });
 
   describe('4.5 — missing Authorization header', () => {
-    it('throws UnauthorizedException when no header is present', async () => {
+    it('throws UnauthenticatedError when no header is present', async () => {
       const guard = makeGuard();
       const request: Record<string, unknown> = { headers: {} };
       const ctx = {
@@ -275,10 +276,10 @@ describe('JwtGuard', () => {
       } as unknown as ExecutionContext;
 
       const err = await catchError(() => guard.canActivate(ctx));
-      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err).toBeInstanceOf(UnauthenticatedError);
     });
 
-    it('throws UnauthorizedException when prefix is not Bearer', async () => {
+    it('throws UnauthenticatedError when prefix is not Bearer', async () => {
       const guard = makeGuard();
       const request: Record<string, unknown> = {
         headers: { authorization: 'Token some-token' },
@@ -288,10 +289,10 @@ describe('JwtGuard', () => {
       } as unknown as ExecutionContext;
 
       const err = await catchError(() => guard.canActivate(ctx));
-      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err).toBeInstanceOf(UnauthenticatedError);
     });
 
-    it('throws UnauthorizedException when header is malformed (not decodable JSON)', async () => {
+    it('throws UnauthenticatedError when header is malformed (not decodable JSON)', async () => {
       const guard = makeGuard();
       // A token whose header segment is not valid base64url JSON
       const token = 'notvalidbase64!.payload.sig';
@@ -303,12 +304,12 @@ describe('JwtGuard', () => {
       } as unknown as ExecutionContext;
 
       const err = await catchError(() => guard.canActivate(ctx));
-      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err).toBeInstanceOf(UnauthenticatedError);
     });
   });
 
   describe('4.6 — wrong secret', () => {
-    it('throws UnauthorizedException when token is signed with a different secret', async () => {
+    it('throws UnauthenticatedError when token is signed with a different secret', async () => {
       const guard = makeGuard(TEST_SECRET);
       const wrongSecretBytes = new TextEncoder().encode(
         'a-different-32-byte-secret-here!!',
@@ -327,12 +328,12 @@ describe('JwtGuard', () => {
       } as unknown as ExecutionContext;
 
       const err = await catchError(() => guard.canActivate(ctx));
-      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err).toBeInstanceOf(UnauthenticatedError);
     });
   });
 
   describe('4.7 — expired token', () => {
-    it('throws UnauthorizedException when token exp is in the past', async () => {
+    it('throws UnauthenticatedError when token exp is in the past', async () => {
       const guard = makeGuard();
       const token = await buildToken(
         { sub: 'user-abc' },
@@ -348,12 +349,12 @@ describe('JwtGuard', () => {
       } as unknown as ExecutionContext;
 
       const err = await catchError(() => guard.canActivate(ctx));
-      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err).toBeInstanceOf(UnauthenticatedError);
     });
   });
 
   describe('4.8 — alg=none rejection (pre-verify, before jwtVerify)', () => {
-    it('throws UnauthorizedException before calling jwtVerify when alg is none', async () => {
+    it('throws UnauthenticatedError before calling jwtVerify when alg is none', async () => {
       const guard = makeGuard();
       // Hand-craft an alg=none token (SignJWT won't produce it)
       const header = Buffer.from(
@@ -371,14 +372,14 @@ describe('JwtGuard', () => {
       } as unknown as ExecutionContext;
 
       const err = await catchError(() => guard.canActivate(ctx));
-      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err).toBeInstanceOf(UnauthenticatedError);
       // Must NOT call jwtVerify — rejection happens before signature verification
       expect(mockJwtVerify).not.toHaveBeenCalled();
     });
   });
 
   describe('4.9 — alg=RS256 rejection (algorithm allowlist)', () => {
-    it('throws UnauthorizedException when token header has alg=RS256', async () => {
+    it('throws UnauthenticatedError when token header has alg=RS256', async () => {
       const guard = makeGuard();
       // Use generateKeyPair mock to produce a key-like object, sign an RS256 token
       const { privateKey } = await jose.generateKeyPair('RS256');
@@ -396,12 +397,12 @@ describe('JwtGuard', () => {
       } as unknown as ExecutionContext;
 
       const err = await catchError(() => guard.canActivate(ctx));
-      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err).toBeInstanceOf(UnauthenticatedError);
     });
   });
 
   describe('4.10 — tampered signature', () => {
-    it('throws UnauthorizedException when signature is mutated', async () => {
+    it('throws UnauthenticatedError when signature is mutated', async () => {
       const guard = makeGuard();
       const token = await buildToken(
         { sub: 'user-abc' },
@@ -421,7 +422,7 @@ describe('JwtGuard', () => {
       } as unknown as ExecutionContext;
 
       const err = await catchError(() => guard.canActivate(ctx));
-      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err).toBeInstanceOf(UnauthenticatedError);
     });
   });
 
@@ -456,8 +457,8 @@ describe('JwtGuard', () => {
       } as unknown as ExecutionContext;
 
       const err = await catchError(() => guard.canActivate(ctx));
-      expect(err).toBeInstanceOf(UnauthorizedException);
-      const response = (err as UnauthorizedException).getResponse() as Record<
+      expect(err).toBeInstanceOf(UnauthenticatedError);
+      const response = (err as UnauthenticatedError).getResponse() as Record<
         string,
         unknown
       >;

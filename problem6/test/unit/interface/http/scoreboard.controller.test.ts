@@ -27,7 +27,7 @@ jest.mock('@opentelemetry/api', () => ({
   SpanStatusCode: { ERROR: 2, OK: 1 },
 }));
 
-import { InternalServerErrorException } from '@nestjs/common';
+import { InternalError } from '../../../../src/scoreboard/shared/errors';
 
 import { ScoreboardController } from '../../../../src/scoreboard/interface/http/controllers/scoreboard.controller';
 import { IdempotencyViolationError } from '../../../../src/scoreboard/domain/errors/idempotency-violation.error';
@@ -135,7 +135,7 @@ describe('ScoreboardController.incrementScore', () => {
     expect(counter.inc).toHaveBeenCalledWith({ result: 'idempotent' });
   });
 
-  it('throws InternalServerErrorException when idempotent replay has no prior event', async () => {
+  it('throws InternalError when idempotent replay has no prior event', async () => {
     const handler = {
       execute: jest.fn().mockRejectedValue(new IdempotencyViolationError(VALID_ACTION_UUID)),
     };
@@ -145,7 +145,7 @@ describe('ScoreboardController.incrementScore', () => {
 
     await expect(
       controller.incrementScore(makeRequest(), makeBody()),
-    ).rejects.toBeInstanceOf(InternalServerErrorException);
+    ).rejects.toBeInstanceOf(InternalError);
   });
 
   it('re-throws non-IdempotencyViolation errors', async () => {
