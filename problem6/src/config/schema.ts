@@ -30,6 +30,7 @@ export const EnvSchema = z.object({
 
   RATE_LIMIT_PER_SEC: z.coerce.number().int().positive().default(10),
   MAX_SSE_CONN_PER_INSTANCE: z.coerce.number().int().positive().default(5000),
+  LEADERBOARD_REBUILD_TOP_N: z.coerce.number().int().positive().default(10000),
 
   LOG_LEVEL: z
     .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])

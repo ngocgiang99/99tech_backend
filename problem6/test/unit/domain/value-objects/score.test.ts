@@ -1,5 +1,8 @@
 import { InvalidArgumentError } from '../../../../src/scoreboard/domain/errors/invalid-argument.error';
-import { Score } from '../../../../src/scoreboard/domain/value-objects/score';
+import {
+  Score,
+  SCORE_MAX,
+} from '../../../../src/scoreboard/domain/value-objects/score';
 
 describe('Score.of', () => {
   it('accepts 0', () => {
@@ -8,6 +11,10 @@ describe('Score.of', () => {
 
   it('accepts a positive integer', () => {
     expect(Score.of(42).value).toBe(42);
+  });
+
+  it('accepts the maximum allowed value (1_000_000_000)', () => {
+    expect(Score.of(SCORE_MAX).value).toBe(1_000_000_000);
   });
 
   it('rejects negative', () => {
@@ -20,6 +27,10 @@ describe('Score.of', () => {
 
   it('rejects NaN', () => {
     expect(() => Score.of(Number.NaN)).toThrow(InvalidArgumentError);
+  });
+
+  it('rejects value above bit-pack cap (1_000_000_001)', () => {
+    expect(() => Score.of(1_000_000_001)).toThrow(InvalidArgumentError);
   });
 
   it('rejects value above MAX_SAFE_INTEGER', () => {

@@ -17,9 +17,23 @@ export interface ScoreEventRecord {
   occurredAt: Date;
 }
 
+/**
+ * Outbox row to be inserted atomically inside the credit() transaction.
+ * The outbox publisher (step-06) will relay these rows to NATS/JetStream.
+ */
+export interface OutboxRow {
+  aggregateId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+}
+
 export interface UserScoreRepository {
   findByUserId(userId: UserId): Promise<UserScore | null>;
-  credit(aggregate: UserScore, event: ScoreCredited): Promise<void>;
+  credit(
+    aggregate: UserScore,
+    event: ScoreCredited,
+    outboxRow: OutboxRow,
+  ): Promise<void>;
   findScoreEventByActionId(
     actionId: ActionId,
   ): Promise<ScoreEventRecord | null>;

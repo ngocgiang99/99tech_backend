@@ -21,6 +21,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     ACTION_TOKEN_TTL_SECONDS: 300,
     RATE_LIMIT_PER_SEC: 10,
     MAX_SSE_CONN_PER_INSTANCE: 5000,
+    LEADERBOARD_REBUILD_TOP_N: 10000,
     LOG_LEVEL: 'info',
     ...overrides,
   };

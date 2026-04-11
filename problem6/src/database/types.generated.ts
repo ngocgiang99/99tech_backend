@@ -16,7 +16,28 @@ export type Int8 = ColumnType<
   bigint | number | string
 >;
 
+export type Json = JsonValue;
+
+export type JsonArray = JsonValue[];
+
+export type JsonObject = {
+  [x: string]: JsonValue | undefined;
+};
+
+export type JsonPrimitive = boolean | number | string | null;
+
+export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
+
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
+
+export interface OutboxEvents {
+  aggregate_id: string;
+  created_at: Generated<Timestamp>;
+  event_type: string;
+  id: Generated<Int8>;
+  payload: Json;
+  published_at: Timestamp | null;
+}
 
 export interface ScoreEvents {
   action_id: string;
@@ -34,6 +55,7 @@ export interface UserScores {
 }
 
 export interface DB {
+  outbox_events: OutboxEvents;
   score_events: ScoreEvents;
   user_scores: UserScores;
 }

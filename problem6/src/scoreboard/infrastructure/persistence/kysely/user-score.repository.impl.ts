@@ -7,6 +7,7 @@ import { DATABASE, type Database } from '../../../../database';
 import { IdempotencyViolationError } from '../../../domain/errors/idempotency-violation.error';
 import { ScoreCredited } from '../../../domain/events/score-credited.event';
 import type {
+  OutboxRow,
   ScoreEventRecord,
   UserScoreRepository,
 } from '../../../domain/ports/user-score.repository';
@@ -82,7 +83,11 @@ export class KyselyUserScoreRepository implements UserScoreRepository {
     };
   }
 
-  async credit(aggregate: UserScore, event: ScoreCredited): Promise<void> {
+  async credit(
+    aggregate: UserScore,
+    event: ScoreCredited,
+    outboxRow: OutboxRow,
+  ): Promise<void> {
     await tracer.startActiveSpan('db.tx', async (span) => {
       try {
         await this.db.transaction().execute(async (trx) => {
@@ -124,6 +129,15 @@ export class KyselyUserScoreRepository implements UserScoreRepository {
                 updated_at: (eb) => eb.ref('excluded.updated_at'),
               }),
             )
+            .execute();
+
+          await trx
+            .insertInto('outbox_events')
+            .values({
+              aggregate_id: outboxRow.aggregateId,
+              event_type: outboxRow.eventType,
+              payload: JSON.stringify(outboxRow.payload),
+            })
             .execute();
         });
       } catch (error) {

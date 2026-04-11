@@ -5,6 +5,7 @@ import { ConfigModule, ConfigService } from './config';
 import { DatabaseModule } from './database';
 import { buildPinoLoggerOptions } from './shared/logger';
 import { MetricsModule } from './shared/metrics';
+import { ReadinessModule } from './shared/readiness';
 import { RedisModule } from './scoreboard/infrastructure/persistence/redis';
 import { ScoreboardModule } from './scoreboard/scoreboard.module';
 
@@ -18,6 +19,7 @@ import { ScoreboardModule } from './scoreboard/scoreboard.module';
         pinoHttp: buildPinoLoggerOptions(config),
       }),
     }),
+    ReadinessModule,
     MetricsModule,
     DatabaseModule,
     RedisModule,
