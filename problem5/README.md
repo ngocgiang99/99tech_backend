@@ -329,6 +329,26 @@ mise run fresh          # down -v + up --build + re-migrate
 pnpm bench:seed         # re-seed if you want to re-run
 ```
 
+### Multi-replica benchmark stack
+
+The single-replica numbers in [`Benchmark.md`](./Benchmark.md) plateau at ~5 000 RPS on a co-located laptop run. To test whether the Node event loop is the wall, a **second compose file** — [`docker-compose.prod.yml`](./docker-compose.prod.yml) — runs the API as **three explicit replicas (`api-1`, `api-2`, `api-3`) behind one nginx reverse proxy**, reusing the dev stack's Postgres, Redis, and `app-network` verbatim. It is a **minimal overlay**, not a separate deployment — bring it up by passing both compose files at once:
+
+```bash
+mise run up:prod               # docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+mise run ps:prod               # confirm api, api-1, api-2, api-3, nginx, postgres, redis all healthy
+mise run health:prod           # curl /healthz through nginx → http://localhost:8080
+
+# Bench from host k6 via nginx (canonical: isolates k6 from api CPU contention)
+mise run bench:prod:read
+mise run bench:prod:cache:warm
+```
+
+The nginx proxy listens on host port `${NGINX_PORT:-8080}` (overridable), round-robins across the three API replicas with HTTP/1.1 keepalive, and uses passive health detection to drop sick upstreams. Each replica caps its Postgres pool at `DB_POOL_MAX=20` so `3 × 20 + headroom ≤ 100` (Postgres's default `max_connections`). All three replicas run `kysely migrate:latest` on startup — Kysely's `migration_lock` row serializes the concurrent attempts safely, so there's no "api-1 only" gating logic in the compose file.
+
+> **The dev stack is unchanged.** `mise run up`, `mise run dev`, `pnpm test:integration`, and all existing `pnpm bench:*` scenarios still run against the single-replica topology. `docker-compose.prod.yml` is a benchmark topology you opt into — it's not a deployment target and there are no production-grade affordances like TLS, secrets, or autoscaling.
+
+Canonical numbers from the multi-replica run live in [`Benchmark_prod.md`](./Benchmark_prod.md), formatted to mirror `Benchmark.md` section-for-section with an added `vs single` column so the lift (or lack of it — spoiler: ~1× for read-load on a single laptop with in-compose k6) is immediately visible. The report's §Interpretation section names the measured bottleneck (it is **not** the Node event loop) and the production mitigations that would unblock a 2-3× lift.
+
 ---
 
 ## Architecture

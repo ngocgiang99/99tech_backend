@@ -4,6 +4,14 @@ pnpm = "9.15.4"
 k6 = "0.56.0"
 
 # ---------------------------------------------------------------------------
+# Task files: `mise.toml` keeps dev-loop / build / migration / docker tasks.
+# Benchmark tasks (k6 scenarios, prod stack wrappers) live in `mise.k6.toml`
+# so the main file stays short and focused.
+# ---------------------------------------------------------------------------
+[task_config]
+includes = ["mise.k6.toml"]
+
+# ---------------------------------------------------------------------------
 # Developer-facing tasks. Run with: mise run <task>  (or the alias `mise r`)
 # List everything with: mise tasks
 # These are thin wrappers over pnpm/docker so day-to-day commands are uniform.
@@ -108,48 +116,8 @@ run = [
   "docker compose up -d --build",
 ]
 
-# --- Benchmarks (k6 = 0.56.0 pinned in [tools] above) --------------------
-# k6 scenarios need the full stack running first: mise run up
-# Seed data must be loaded first: mise run bench:seed
-# For cache-cold runs, restart the API with CACHE_ENABLED=false in .env
-# before running bench:cache:cold (see Benchmark.md §Methodology).
-
-[tasks."bench:seed"]
-description = "Pre-populate resources table with 10000 bench rows and write ids.json"
-run = "pnpm bench:seed"
-
-[tasks."bench:flush-cache"]
-description = "FLUSHDB on Redis — used before cache-cold runs"
-run = "pnpm bench:flush-cache"
-
-[tasks."bench:smoke"]
-description = "Smoke scenario: 1 VU × 30 s, sanity check"
-run = "pnpm bench:smoke"
-
-[tasks."bench:read"]
-description = "Read-load scenario: ramping arrival rate targeting 10k GET RPS"
-run = "pnpm bench:read"
-
-[tasks."bench:write"]
-description = "Write-load scenario: 100 RPS mix of POST/PATCH/DELETE"
-run = "pnpm bench:write"
-
-[tasks."bench:mixed"]
-description = "Mixed scenario: 95% read / 5% write (primary benchmark)"
-run = "pnpm bench:mixed"
-
-[tasks."bench:spike"]
-description = "Spike scenario: 1k → 10k RPS over 10 s"
-run = "pnpm bench:spike"
-
-[tasks."bench:stress"]
-description = "Stress scenario: ramp until saturation, find the breaking point"
-run = "pnpm bench:stress"
-
-[tasks."bench:cache:cold"]
-description = "Cache-cold scenario: read-load with Redis flushed (cold-cache baseline)"
-run = "pnpm bench:cache:cold"
-
-[tasks."bench:cache:warm"]
-description = "Cache-warm scenario: read-load after pre-warming the cache"
-run = "pnpm bench:cache:warm"
+# --- Benchmarks -------------------------------------------------------------
+# Benchmark tasks (bench:*, bench:prod:*, up:prod, down:prod, etc.) live in
+# `mise.k6.toml`. They are included automatically via [task_config] at the top
+# of this file, so `mise tasks` lists everything together — the split is
+# organizational only, not functional.

@@ -1,0 +1,165 @@
+# =============================================================================
+# docker-compose.prod.yml — multi-replica BENCHMARK topology (NOT a deployment)
+# =============================================================================
+#
+# What this file is:
+#   A thin overlay on top of `docker-compose.yml` that adds three API replicas
+#   (`api-1`, `api-2`, `api-3`) and one `nginx` reverse proxy. The point is to
+#   put more than one Node.js event loop in front of the k6 load generator so
+#   `Benchmark.md` can tell the difference between "the API is CPU-bound" and
+#   "we ran one worker on a multi-core box."
+#
+#   It DOES NOT redefine postgres, redis, the dev `api`, or the shared network.
+#   Those come from `docker-compose.yml`. Launch both files together:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#     # or:
+#     mise run up:prod
+#
+#   After that: dev `api` is still on host :3000, nginx is on host :8080, and
+#   api-1 / api-2 / api-3 live only inside the network (no host ports), reached
+#   via nginx's upstream block.
+#
+# What this file is NOT:
+#   - Not a production deployment target (no secrets, no TLS, no autoscaling).
+#   - Not a replacement for the dev stack — just additions on top of it.
+#   - Not meaningful on its own: running `docker compose -f docker-compose.prod.yml up -d`
+#     WITHOUT also passing `-f docker-compose.yml` will fail because postgres,
+#     redis, and `app-network` are not defined here. Always use both files.
+#
+# Canonical benchmark report: ./Benchmark_prod.md
+#
+# -----------------------------------------------------------------------------
+# Recommended CPU pinning (DISABLED by default — see Decision 8 of design.md)
+# -----------------------------------------------------------------------------
+# On a 12-core M-series laptop, reproducible runs benefit from pinning each
+# container to a dedicated core range so the three API replicas do not fight
+# over the same physical cores. To enable, uncomment the `cpuset_cpus` lines
+# on each service below. Semantics differ between Docker Desktop on macOS and
+# Linux, so the default run keeps pinning OFF for portability.
+#
+#   api-1   → cpuset_cpus: "0-1"
+#   api-2   → cpuset_cpus: "2-3"
+#   api-3   → cpuset_cpus: "4-5"
+#   nginx   → cpuset_cpus: "6"
+#   (dev api / postgres / redis in the dev stack; k6 on the host)
+#
+# -----------------------------------------------------------------------------
+# Migration strategy: Kysely locking (see §1.3 of tasks.md)
+# -----------------------------------------------------------------------------
+# `entrypoint.sh` unconditionally runs `kysely migrate:latest` on every
+# container start. All three replicas (plus the dev `api` from the dev file,
+# which comes up first because `depends_on` on postgres is stricter there)
+# will attempt to migrate. Kysely's `Migrator` uses a `migration_lock` row
+# with SELECT ... FOR UPDATE, so concurrent attempts serialize safely: the
+# first replica to grab the lock runs pending migrations, the others wait
+# and then observe the completed state. No `MIGRATE_ON_START` gate is needed.
+#
+# -----------------------------------------------------------------------------
+# Connection pool sizing (Decision 5 of design.md)
+# -----------------------------------------------------------------------------
+# Formula: (replicas × DB_POOL_MAX) + headroom ≤ Postgres max_connections
+# Postgres 16 default `max_connections` = 100.
+# Active replicas under the prod launch:
+#   - dev `api`         → 1 × 10 = 10  (reads DB_POOL_MAX from .env, default 10)
+#   - api-1/api-2/api-3 → 3 × 20 = 60  (overridden in this file's `environment:`)
+#   - headroom          → ~10 (psql, migrations, admin)
+#   Total              = 80, with 20 spare below the 100 limit.
+# If you stop the dev `api` before benchmarking, subtract 10 and the pool is
+# even safer. The dev `api` is idle during a prod benchmark anyway.
+# NOTE: the env var is `DB_POOL_MAX` (see src/config/env.ts), not
+# `DATABASE_POOL_SIZE` (the abstract name used in the design doc).
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Shared api service template. api-1/api-2/api-3 inherit this via `<<: *api-template`
+# and override only what they must (container_name). Using a YAML anchor keeps
+# the three blocks DRY without losing the stable hostnames that nginx needs.
+# -----------------------------------------------------------------------------
+x-api-template: &api-template
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: resources-api
+  env_file:
+    - .env
+  environment:
+    - NODE_ENV=production
+    - PORT=3000
+    - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-resources_dev}
+    - REDIS_URL=redis://redis:6379
+    - DB_POOL_MAX=20
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://localhost:3000/healthz?probe=liveness || exit 1"]
+    interval: 10s
+    timeout: 5s
+    start_period: 30s
+    retries: 3
+  networks:
+    - app-network
+  restart: unless-stopped
+
+services:
+  # ---------------------------------------------------------------------------
+  # API replica 1 (internal-only, reached via nginx on port 3000)
+  # ---------------------------------------------------------------------------
+  api-1:
+    <<: *api-template
+    container_name: resources-api-1
+    # cpuset_cpus: "0-1"   # enable for reproducible pinning, see file header
+
+  # ---------------------------------------------------------------------------
+  # API replica 2
+  # ---------------------------------------------------------------------------
+  api-2:
+    <<: *api-template
+    container_name: resources-api-2
+    # cpuset_cpus: "2-3"
+
+  # ---------------------------------------------------------------------------
+  # API replica 3
+  # ---------------------------------------------------------------------------
+  api-3:
+    <<: *api-template
+    container_name: resources-api-3
+    # cpuset_cpus: "4-5"
+
+  # ---------------------------------------------------------------------------
+  # nginx reverse proxy — round-robin across api-1 / api-2 / api-3.
+  # Listens on container port 80; host port is ${NGINX_PORT:-8080}.
+  # Config lives at ./deploy/nginx/nginx.conf (mounted read-only).
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: resources-nginx
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api-1:
+        condition: service_healthy
+      api-2:
+        condition: service_healthy
+      api-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/healthz?probe=liveness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - app-network
+    restart: unless-stopped
+    # cpuset_cpus: "6"
+
+# postgres, redis, the dev `api`, the `app-network` network, and the
+# `pg-data` / `redis-data` volumes all come from docker-compose.yml.
+# That file is the single source of truth for those definitions; the prod
+# file intentionally adds nothing to them.

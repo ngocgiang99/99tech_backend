@@ -1,0 +1,128 @@
+# =============================================================================
+# mise.k6.toml — benchmark / k6 tasks only
+# =============================================================================
+# Included from `mise.toml` via `[task_config] includes = ["mise.k6.toml"]`.
+# Keeping k6 / benchmark tasks in their own file makes the main `mise.toml`
+# short and dev-loop focused; this file holds everything benchmark-adjacent:
+# - seed + cache-flush helpers
+# - single-replica scenarios (bench:*)
+# - multi-replica prod scenarios (bench:prod:*)
+# - the prod stack up/down wrappers that the prod benchmarks need
+#
+# k6 = 0.56.0 is pinned in mise.toml's [tools] block, not here.
+# =============================================================================
+
+# --- Bench helpers --------------------------------------------------------
+# k6 scenarios need the full stack running first: mise run up
+# Seed data must be loaded first: mise run bench:seed
+# For cache-cold runs, restart the API with CACHE_ENABLED=false in .env
+# before running bench:cache:cold (see Benchmark.md §Methodology).
+
+[tasks."bench:seed"]
+description = "Pre-populate resources table with 10000 bench rows and write ids.json"
+run = "pnpm bench:seed"
+
+[tasks."bench:flush-cache"]
+description = "FLUSHDB on Redis — used before cache-cold runs"
+run = "pnpm bench:flush-cache"
+
+# --- Single-replica benchmarks (dev stack) --------------------------------
+
+[tasks."bench:smoke"]
+description = "Smoke scenario: 1 VU × 30 s, sanity check"
+run = "pnpm bench:smoke"
+
+[tasks."bench:read"]
+description = "Read-load scenario: ramping arrival rate targeting 10k GET RPS"
+run = "pnpm bench:read"
+
+[tasks."bench:write"]
+description = "Write-load scenario: 100 RPS mix of POST/PATCH/DELETE"
+run = "pnpm bench:write"
+
+[tasks."bench:mixed"]
+description = "Mixed scenario: 95% read / 5% write (primary benchmark)"
+run = "pnpm bench:mixed"
+
+[tasks."bench:spike"]
+description = "Spike scenario: 1k → 10k RPS over 10 s"
+run = "pnpm bench:spike"
+
+[tasks."bench:stress"]
+description = "Stress scenario: ramp until saturation, find the breaking point"
+run = "pnpm bench:stress"
+
+[tasks."bench:cache:cold"]
+description = "Cache-cold scenario: read-load with Redis flushed (cold-cache baseline)"
+run = "pnpm bench:cache:cold"
+
+[tasks."bench:cache:warm"]
+description = "Cache-warm scenario: read-load after pre-warming the cache"
+run = "pnpm bench:cache:warm"
+
+# --- Prod stack (docker-compose.prod.yml) ---------------------------------
+# Multi-replica benchmark topology: 3× api behind one nginx, layered on top
+# of the dev stack. The prod compose file ONLY defines api-1/api-2/api-3
+# and nginx; it reuses `docker-compose.yml`'s postgres, redis, and the
+# shared `app-network` via a multi-file compose launch.
+#
+# `mise run up` still brings up just the dev stack unchanged.
+# `mise run up:prod` brings up dev + prod on top of each other.
+
+[tasks."up:prod"]
+description = "Start dev stack + multi-replica api-1/2/3 + nginx on top"
+run = "docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d"
+
+[tasks."up:prod:build"]
+description = "Rebuild images and start dev stack + multi-replica api-1/2/3 + nginx"
+run = "docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build"
+
+[tasks."down:prod"]
+description = "Stop dev + prod stacks (volumes persist)"
+run = "docker compose -f docker-compose.yml -f docker-compose.prod.yml down"
+
+[tasks."down:prod:volumes"]
+description = "Stop dev + prod stacks AND remove shared volumes (wipes Postgres + Redis)"
+run = "docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v"
+
+[tasks."ps:prod"]
+description = "Show status of combined dev + prod stack containers"
+run = "docker compose -f docker-compose.yml -f docker-compose.prod.yml ps"
+
+[tasks."logs:prod"]
+description = "Tail logs from the prod stack"
+run = "docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f nginx api-1 api-2 api-3"
+
+[tasks."health:prod"]
+description = "Curl /healthz through nginx against the prod stack"
+run = "curl -sf http://localhost:${NGINX_PORT:-8080}/healthz | jq ."
+
+# --- Prod benchmarks ------------------------------------------------------
+# IMPORTANT: These tasks run k6 from the HOST (not the in-compose container)
+# so the load generator does not compete with the three api replicas for CPU
+# on the same Docker network bridge. See Decision 6 of s11 design.md.
+# Requires the prod stack to be up: `mise run up:prod`.
+
+[tasks."bench:prod:smoke"]
+description = "Prod smoke: host k6 → nginx → 3× api, 1 VU × 30 s sanity check"
+run = "k6 run benchmarks/scenarios/smoke.js -e BASE_URL=http://localhost:${NGINX_PORT:-8080}"
+
+[tasks."bench:prod:read"]
+description = "Prod read-load: host k6 → nginx → 3× api, ramping to 10k GET RPS"
+run = "k6 run benchmarks/scenarios/read-load.js -e BASE_URL=http://localhost:${NGINX_PORT:-8080}"
+
+[tasks."bench:prod:write"]
+description = "Prod write-load: host k6 → nginx → 3× api, 100 RPS mix of POST/PATCH/DELETE"
+run = "k6 run benchmarks/scenarios/write-load.js -e BASE_URL=http://localhost:${NGINX_PORT:-8080}"
+
+[tasks."bench:prod:mixed"]
+description = "Prod mixed: host k6 → nginx → 3× api, 95% read / 5% write"
+run = "k6 run benchmarks/scenarios/mixed.js -e BASE_URL=http://localhost:${NGINX_PORT:-8080}"
+
+[tasks."bench:prod:cache:cold"]
+description = "Prod cache-cold: host k6, read-load with Redis flushed (restart prod api with CACHE_ENABLED=false in .env first)"
+run = "k6 run benchmarks/scenarios/cache-cold.js -e BASE_URL=http://localhost:${NGINX_PORT:-8080}"
+
+[tasks."bench:prod:cache:warm"]
+description = "Prod cache-warm: host k6, read-load with pre-warmed cache"
+run = "k6 run benchmarks/scenarios/cache-warm.js -e BASE_URL=http://localhost:${NGINX_PORT:-8080}"
