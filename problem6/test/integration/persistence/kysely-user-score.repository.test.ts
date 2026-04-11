@@ -50,7 +50,7 @@ describe('KyselyUserScoreRepository integration', () => {
     const { aggregate, event } = makeAggregate(userId, 10);
     const outboxRow = makeOutboxRow(userId, event.actionId, event.delta, aggregate.totalScore);
 
-    await repo.credit(aggregate, event, outboxRow);
+    await repo.credit(aggregate, event, [outboxRow]);
 
     const result = await repo.findByUserId(UserId.of(userId));
     expect(result).not.toBeNull();
@@ -63,7 +63,7 @@ describe('KyselyUserScoreRepository integration', () => {
     const { aggregate, event } = makeAggregate(userId, 5);
     const outboxRow = makeOutboxRow(userId, event.actionId, event.delta, aggregate.totalScore);
 
-    await repo.credit(aggregate, event, outboxRow);
+    await repo.credit(aggregate, event, [outboxRow]);
 
     // Verify the outbox row was inserted
     const outboxRecord = await handle.db
@@ -84,7 +84,7 @@ describe('KyselyUserScoreRepository integration', () => {
     const { aggregate, event } = makeAggregate(userId, delta);
     const outboxRow = makeOutboxRow(userId, event.actionId, event.delta, aggregate.totalScore);
 
-    await repo.credit(aggregate, event, outboxRow);
+    await repo.credit(aggregate, event, [outboxRow]);
 
     const outboxRecord = await handle.db
       .selectFrom('outbox_events')
@@ -118,11 +118,11 @@ describe('KyselyUserScoreRepository integration', () => {
 
     // First credit
     const { aggregate: agg1, event: evt1 } = makeAggregate(userId, 15);
-    await repo.credit(agg1, evt1, makeOutboxRow(userId, evt1.actionId, evt1.delta, agg1.totalScore));
+    await repo.credit(agg1, evt1, [makeOutboxRow(userId, evt1.actionId, evt1.delta, agg1.totalScore)]);
 
     // Second credit on top
     const { aggregate: agg2, event: evt2 } = makeAggregate(userId, 25);
-    await repo.credit(agg2, evt2, makeOutboxRow(userId, evt2.actionId, evt2.delta, agg2.totalScore));
+    await repo.credit(agg2, evt2, [makeOutboxRow(userId, evt2.actionId, evt2.delta, agg2.totalScore)]);
 
     const result = await repo.findByUserId(UserId.of(userId));
     expect(result).not.toBeNull();
@@ -134,7 +134,7 @@ describe('KyselyUserScoreRepository integration', () => {
     const userId = randomUUID();
     const { aggregate, event } = makeAggregate(userId, 5);
 
-    await repo.credit(aggregate, event, makeOutboxRow(userId, event.actionId, event.delta, aggregate.totalScore));
+    await repo.credit(aggregate, event, [makeOutboxRow(userId, event.actionId, event.delta, aggregate.totalScore)]);
 
     // Second call with same event (same actionId)
     const aggDup = UserScore.empty(UserId.of(userId));
@@ -144,7 +144,7 @@ describe('KyselyUserScoreRepository integration', () => {
     const [evtDup] = aggDup.pullEvents() as ScoreCredited[];
 
     await expect(
-      repo.credit(aggDup, evtDup, makeOutboxRow(userId, evtDup.actionId, evtDup.delta, aggDup.totalScore)),
+      repo.credit(aggDup, evtDup, [makeOutboxRow(userId, evtDup.actionId, evtDup.delta, aggDup.totalScore)]),
     ).rejects.toThrow(IdempotencyViolationError);
   });
 
@@ -158,8 +158,8 @@ describe('KyselyUserScoreRepository integration', () => {
     ] = [makeAggregate(userId, 7), makeAggregate(userId, 13)];
 
     await Promise.all([
-      repo.credit(agg1, evt1, makeOutboxRow(userId, evt1.actionId, evt1.delta, agg1.totalScore)),
-      repo.credit(agg2, evt2, makeOutboxRow(userId, evt2.actionId, evt2.delta, agg2.totalScore)),
+      repo.credit(agg1, evt1, [makeOutboxRow(userId, evt1.actionId, evt1.delta, agg1.totalScore)]),
+      repo.credit(agg2, evt2, [makeOutboxRow(userId, evt2.actionId, evt2.delta, agg2.totalScore)]),
     ]);
 
     const result = await repo.findByUserId(UserId.of(userId));
@@ -170,7 +170,7 @@ describe('KyselyUserScoreRepository integration', () => {
   test('Test 5: findScoreEventByActionId returns the inserted record', async () => {
     const userId = randomUUID();
     const { aggregate, event } = makeAggregate(userId, 8);
-    await repo.credit(aggregate, event, makeOutboxRow(userId, event.actionId, event.delta, aggregate.totalScore));
+    await repo.credit(aggregate, event, [makeOutboxRow(userId, event.actionId, event.delta, aggregate.totalScore)]);
 
     const record = await repo.findScoreEventByActionId(ActionId.of(event.actionId));
     expect(record).not.toBeNull();

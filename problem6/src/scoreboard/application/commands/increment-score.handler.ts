@@ -43,19 +43,30 @@ export class IncrementScoreHandler {
 
     const events = aggregate.pullEvents();
 
-    const outboxRow: OutboxRow = {
-      aggregateId: cmd.userId.value,
-      eventType: 'scoreboard.score.credited',
-      payload: {
-        userId: cmd.userId.value,
-        actionId: cmd.actionId.value,
-        delta: cmd.delta.value,
-        newTotal: aggregate.totalScore,
-        occurredAt: cmd.occurredAt.toISOString(),
+    const outboxRows: OutboxRow[] = [
+      {
+        aggregateId: cmd.userId.value,
+        eventType: 'scoreboard.score.credited',
+        payload: {
+          userId: cmd.userId.value,
+          actionId: cmd.actionId.value,
+          delta: cmd.delta.value,
+          newTotal: aggregate.totalScore,
+          occurredAt: cmd.occurredAt.toISOString(),
+        },
       },
-    };
+      {
+        aggregateId: cmd.userId.value,
+        eventType: 'scoreboard.leaderboard.updated',
+        payload: {
+          userId: cmd.userId.value,
+          newTotal: aggregate.totalScore,
+          occurredAt: cmd.occurredAt.toISOString(),
+        },
+      },
+    ];
 
-    await this.repo.credit(aggregate, events[0], outboxRow);
+    await this.repo.credit(aggregate, events[0], outboxRows);
 
     this.scoreIncrementTotal.inc({ result: 'committed' });
 

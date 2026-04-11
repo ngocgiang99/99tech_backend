@@ -30,6 +30,16 @@ export const EnvSchema = z.object({
   MAX_SSE_CONN_PER_INSTANCE: z.coerce.number().int().positive().default(5000),
   LEADERBOARD_REBUILD_TOP_N: z.coerce.number().int().positive().default(10000),
 
+  // Outbox publisher settings
+  OUTBOX_POLL_INTERVAL_MS: z.coerce.number().default(50),
+  OUTBOX_LOCK_TTL_SECONDS: z.coerce.number().default(10),
+  OUTBOX_COALESCE_WINDOW_MS: z.coerce.number().default(100),
+
+  // SSE backpressure settings (message-count only — no byte-count threshold)
+  SSE_BACKPRESSURE_MAX_PENDING_MESSAGES: z.coerce.number().default(50),
+  SSE_SLOW_CLIENT_BUFFER_TIMEOUT_MS: z.coerce.number().default(5000),
+  SSE_HEARTBEAT_INTERVAL_MS: z.coerce.number().default(15000),
+
   LOG_LEVEL: z
     .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
     .default('info'),

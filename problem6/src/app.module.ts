@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { LoggerModule } from 'nestjs-pino';
 
 import { ConfigModule, ConfigService } from './config';
 import { DatabaseModule } from './database';
+import { NatsModule } from './scoreboard/infrastructure/messaging/nats';
 import { buildPinoLoggerOptions } from './shared/logger';
 import { MetricsModule } from './shared/metrics';
 import { ReadinessModule } from './shared/readiness';
@@ -12,6 +14,7 @@ import { ScoreboardModule } from './scoreboard/scoreboard.module';
 @Module({
   imports: [
     ConfigModule,
+    EventEmitterModule.forRoot(),
     LoggerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -23,6 +26,7 @@ import { ScoreboardModule } from './scoreboard/scoreboard.module';
     MetricsModule,
     DatabaseModule,
     RedisModule,
+    NatsModule,
     ScoreboardModule,
   ],
 })

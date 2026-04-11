@@ -32,7 +32,7 @@ export interface UserScoreRepository {
   credit(
     aggregate: UserScore,
     event: ScoreCredited,
-    outboxRow: OutboxRow,
+    outboxRows: OutboxRow[],
   ): Promise<void>;
   findScoreEventByActionId(
     actionId: ActionId,

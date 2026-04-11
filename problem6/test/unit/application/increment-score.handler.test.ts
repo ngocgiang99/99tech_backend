@@ -93,11 +93,13 @@ describe('IncrementScoreHandler.execute', () => {
     );
     // Drain the priming event so we don't trigger idempotency on the real test
     const seedEvent = seeded.pullEvents()[0];
-    await repo.credit(seeded, seedEvent, {
-      aggregateId: USER.value,
-      eventType: 'scoreboard.score.credited',
-      payload: { userId: USER.value, delta: 1, newTotal: 101, occurredAt: new Date('2025-01-01T00:00:00Z').toISOString() },
-    });
+    await repo.credit(seeded, seedEvent, [
+      {
+        aggregateId: USER.value,
+        eventType: 'scoreboard.score.credited',
+        payload: { userId: USER.value, delta: 1, newTotal: 101, occurredAt: new Date('2025-01-01T00:00:00Z').toISOString() },
+      },
+    ]);
 
     const cache = new FakeLeaderboardCache();
     cache.rankToReturn = null;
@@ -231,7 +233,7 @@ describe('IncrementScoreHandler.execute', () => {
   // Outbox row tests
   // ---------------------------------------------------------------------------
 
-  it('stores outbox row in the fake repository with correct shape', async () => {
+  it('stores outbox rows in the fake repository with correct shape (credited + leaderboard.updated)', async () => {
     const repo = new FakeUserScoreRepository();
     const cache = new FakeLeaderboardCache();
     const handler = makeHandler(repo, cache);
@@ -246,14 +248,31 @@ describe('IncrementScoreHandler.execute', () => {
       }),
     );
 
-    expect(repo.outboxRows).toHaveLength(1);
-    const outbox = repo.outboxRows[0];
-    expect(outbox.aggregateId).toBe(USER.value);
-    expect(outbox.eventType).toBe('scoreboard.score.credited');
-    expect(outbox.payload).toMatchObject({
+    // The handler writes two outbox rows atomically: the raw score.credited
+    // audit event AND a leaderboard.updated event for the SSE fan-out path.
+    // The outbox publisher's coalescing logic (step-06) decides whether to
+    // actually publish the leaderboard.updated message.
+    expect(repo.outboxRows).toHaveLength(2);
+
+    const credited = repo.outboxRows.find(
+      (r) => r.eventType === 'scoreboard.score.credited',
+    );
+    expect(credited).toBeDefined();
+    expect(credited!.aggregateId).toBe(USER.value);
+    expect(credited!.payload).toMatchObject({
       userId: USER.value,
       actionId: ACTION_A.value,
       delta: 42,
+      newTotal: 42,
+    });
+
+    const leaderboardUpdated = repo.outboxRows.find(
+      (r) => r.eventType === 'scoreboard.leaderboard.updated',
+    );
+    expect(leaderboardUpdated).toBeDefined();
+    expect(leaderboardUpdated!.aggregateId).toBe(USER.value);
+    expect(leaderboardUpdated!.payload).toMatchObject({
+      userId: USER.value,
       newTotal: 42,
     });
   });

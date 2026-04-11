@@ -86,7 +86,7 @@ export class KyselyUserScoreRepository implements UserScoreRepository {
   async credit(
     aggregate: UserScore,
     event: ScoreCredited,
-    outboxRow: OutboxRow,
+    outboxRows: OutboxRow[],
   ): Promise<void> {
     await tracer.startActiveSpan('db.tx', async (span) => {
       try {
@@ -131,14 +131,18 @@ export class KyselyUserScoreRepository implements UserScoreRepository {
             )
             .execute();
 
-          await trx
-            .insertInto('outbox_events')
-            .values({
-              aggregate_id: outboxRow.aggregateId,
-              event_type: outboxRow.eventType,
-              payload: JSON.stringify(outboxRow.payload),
-            })
-            .execute();
+          if (outboxRows.length > 0) {
+            await trx
+              .insertInto('outbox_events')
+              .values(
+                outboxRows.map((row) => ({
+                  aggregate_id: row.aggregateId,
+                  event_type: row.eventType,
+                  payload: JSON.stringify(row.payload),
+                })),
+              )
+              .execute();
+          }
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

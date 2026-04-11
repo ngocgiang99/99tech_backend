@@ -27,6 +27,15 @@ const config: Config = {
     '!src/config/index.ts',
     // Infrastructure adapters that require real DB/Redis — covered by integration tests
     '!src/scoreboard/infrastructure/persistence/**',
+    // NATS messaging infrastructure — requires real NATS; covered by integration tests
+    '!src/scoreboard/infrastructure/messaging/nats/stream-bootstrap.ts',
+    '!src/scoreboard/infrastructure/messaging/nats/nats.client.ts',
+    '!src/scoreboard/infrastructure/messaging/nats/leaderboard-updates.emitter.ts',
+    '!src/scoreboard/infrastructure/messaging/nats/jetstream.subscriber.ts',
+    // Outbox publisher — requires real Postgres + Redis; covered by integration tests
+    '!src/scoreboard/infrastructure/outbox/outbox.publisher.service.ts',
+    // SSE controller — requires live HTTP + emitter; covered by integration tests
+    '!src/scoreboard/interface/http/controllers/leaderboard-stream.controller.ts',
     // NestJS app-bootstrap wiring — cannot be meaningfully unit-tested
     '!src/shared/logger/index.ts',
     '!src/shared/logger/request-id.hook.ts',

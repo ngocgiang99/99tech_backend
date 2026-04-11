@@ -23,14 +23,14 @@ export class FakeUserScoreRepository implements UserScoreRepository {
   async credit(
     aggregate: UserScore,
     event: ScoreCredited,
-    outboxRow: OutboxRow,
+    outboxRows: OutboxRow[],
   ): Promise<void> {
     if (this.seenActionIds.has(event.actionId)) {
       throw new IdempotencyViolationError(event.actionId);
     }
     this.seenActionIds.add(event.actionId);
     this.users.set(aggregate.userId.value, aggregate);
-    this.outboxRows.push(outboxRow);
+    this.outboxRows.push(...outboxRows);
     // Record the event for idempotent-replay lookups; totalScoreAfter is the post-credit total.
     this.scoreEvents.set(event.actionId, {
       actionId: event.actionId,

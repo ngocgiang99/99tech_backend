@@ -11,3 +11,8 @@ export type {
   LeaderboardEntry,
 } from './ports/leaderboard-cache';
 export { LEADERBOARD_CACHE_TOKEN } from './ports/leaderboard-cache';
+export type {
+  DomainEvent,
+  DomainEventPublisher,
+} from './ports/domain-event-publisher';
+export { DOMAIN_EVENT_PUBLISHER } from './ports/domain-event-publisher';
