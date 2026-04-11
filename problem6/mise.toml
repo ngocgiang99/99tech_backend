@@ -1,0 +1,165 @@
+# ─── problem6 · Scoreboard Module · Toolchain & Tasks ────────────────────────
+#
+# mise (https://mise.jdx.dev) is the single interface for managing the toolchain
+# and running project commands. Do not use `npm run …`; use `mise run …`.
+#
+# Quickstart:
+#   mise install          # installs Node and pnpm at pinned versions
+#   mise run setup        # pnpm install + kysely codegen
+#   mise run infra:up     # docker compose up (postgres, redis, nats)
+#   mise run db:migrate   # apply migrations
+#   mise run dev          # start API in watch mode on :3000
+#   mise run test:coverage  # unit tests + ≥80% coverage gate
+
+[tools]
+node = "22.11.0"
+pnpm = "9.12.0"
+
+[env]
+_.file    = ".env"
+NODE_ENV  = "development"
+PORT      = "3000"
+
+# ─── Setup ───────────────────────────────────────────────────────────────────
+[tasks.setup]
+description = "Install dependencies and regenerate DB types"
+run = [
+  "pnpm install --frozen-lockfile",
+  "mise run db:codegen",
+]
+
+# ─── Dev loop ────────────────────────────────────────────────────────────────
+[tasks.dev]
+description = "Run API in watch mode on :3000"
+run = "pnpm nest start --watch"
+
+[tasks.build]
+description = "Produce a production build in ./dist"
+run = "pnpm nest build"
+
+[tasks.start]
+description = "Run the compiled server"
+run = "node dist/main.js"
+
+# ─── Quality gates ───────────────────────────────────────────────────────────
+[tasks.lint]
+description = "Lint the codebase (zero warnings allowed)"
+run = "pnpm eslint 'src/**/*.ts' --max-warnings 0"
+
+[tasks.typecheck]
+description = "Strict TypeScript check"
+run = "pnpm tsc --noEmit"
+
+[tasks.format]
+description = "Apply Prettier"
+run = "pnpm prettier --write 'src/**/*.ts'"
+
+[tasks.check]
+description = "Run lint + typecheck + unit tests (pre-push gate)"
+depends = ["lint", "typecheck", "test"]
+
+# ─── Tests ───────────────────────────────────────────────────────────────────
+[tasks.test]
+description = "Unit tests (pure domain + application, no I/O)"
+run = "pnpm jest --config jest.config.ts"
+
+[tasks."test:integration"]
+description = "Integration tests with Testcontainers (real Postgres + Redis + NATS)"
+run = "pnpm jest --config jest.integration.config.ts --runInBand"
+
+[tasks."test:e2e"]
+description = "End-to-end tests against the docker-compose stack"
+run = "pnpm jest --config jest.e2e.config.ts --runInBand"
+
+[tasks."test:coverage"]
+description = "Unit + integration with coverage — fails build if <80% lines/branches/functions/statements"
+run = """
+pnpm jest --coverage \
+  --coverageThreshold='{"global":{"lines":80,"branches":80,"functions":80,"statements":80}}'
+"""
+
+[tasks."test:load"]
+description = "k6 load test — 10k SSE connections + write burst"
+run = "k6 run tests/load/scoreboard.k6.ts"
+
+# ─── Database (Kysely + kysely-ctl) ──────────────────────────────────────────
+[tasks."db:migrate"]
+description = "Apply pending migrations"
+run = "pnpm kysely migrate:latest"
+
+[tasks."db:migrate:make"]
+description = "Create a new migration file — usage: mise run db:migrate:make -- init_scoreboard"
+run = "pnpm kysely migrate:make"
+
+[tasks."db:migrate:down"]
+description = "Roll back the most recent migration"
+run = "pnpm kysely migrate:down"
+
+[tasks."db:codegen"]
+description = "Regenerate TypeScript DB types from the live schema"
+run = "pnpm kysely-codegen --out-file src/database/types.generated.ts"
+
+[tasks."db:seed"]
+description = "Seed the local DB with sample users"
+run = "pnpm tsx scripts/seed.ts"
+
+# ─── Local infrastructure (docker compose) ───────────────────────────────────
+[tasks."infra:up"]
+description = "Start Postgres + Redis + NATS"
+run = "docker compose up -d postgres redis nats"
+
+[tasks."infra:up:full"]
+description = "Start infra + API container"
+run = "docker compose --profile full up -d"
+
+[tasks."infra:up:tools"]
+description = "Start infra + dev tooling (adminer, redis-commander, nats-box)"
+run = "docker compose --profile tools up -d"
+
+[tasks."infra:down"]
+description = "Stop all services"
+run = "docker compose down"
+
+[tasks."infra:reset"]
+description = "Stop services AND delete volumes — WARNING: wipes local data"
+run = "docker compose down -v"
+
+[tasks."infra:logs"]
+description = "Tail logs from all services"
+run = "docker compose logs -f"
+
+# ─── Docker image ────────────────────────────────────────────────────────────
+# ─── NATS JetStream helpers ──────────────────────────────────────────────────
+[tasks."nats:init"]
+description = "Create or update the SCOREBOARD JetStream stream (idempotent; MVP retention: 1 month / 1M msgs / 1 GB)"
+run = """
+docker compose --profile tools run --rm nats-box \
+  nats --server nats://nats:4222 stream add SCOREBOARD \
+    --subjects='scoreboard.>' \
+    --storage=file \
+    --retention=limits \
+    --max-age=720h \
+    --max-msgs=1000000 \
+    --max-bytes=1073741824 \
+    --discard=old \
+    --dupe-window=2m \
+    --replicas=1 \
+    --defaults
+"""
+
+[tasks."nats:info"]
+description = "Inspect the SCOREBOARD stream"
+run = "docker compose --profile tools run --rm nats-box nats --server nats://nats:4222 stream info SCOREBOARD"
+
+[tasks."nats:cli"]
+description = "Open an interactive nats CLI"
+run = "docker compose --profile tools run --rm nats-box sh"
+
+# ─── Docker image ────────────────────────────────────────────────────────────
+[tasks."docker:build"]
+description = "Build the runtime image locally"
+run = "docker build --target runtime -t problem6/scoreboard-api:dev ."
+
+[tasks."docker:run"]
+description = "Run the runtime image against the compose network"
+run = "docker run --rm -it --network problem6_default -p 3000:3000 --env-file .env problem6/scoreboard-api:dev"
