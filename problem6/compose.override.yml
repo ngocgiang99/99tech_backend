@@ -43,3 +43,47 @@ services:
     ports: !override
       - "54222:4222"
       - "58222:8222"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Local observability stack (dev only) — opt-in via `--profile observability`
+  #
+  # Default `docker compose up` does NOT start these services. To run them:
+  #   mise run obs:up      # start prometheus + grafana
+  #   mise run obs:down    # stop them
+  #
+  # Full documentation, troubleshooting, and the dashboard edit-and-commit
+  # workflow live in `infra/local/README.md`. The anonymous-admin Grafana
+  # settings and loopback-only port bindings are DEV CONVENIENCES — they
+  # MUST NOT be transferred to `infra/helm/` or any production IaC.
+  # ─────────────────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    profiles: ["observability"]
+    volumes:
+      - ./infra/local/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-lifecycle
+    ports:
+      - "127.0.0.1:59090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: ["observability"]
+    depends_on:
+      - prometheus
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_USERS_DEFAULT_THEME: "dark"
+    volumes:
+      - ./infra/local/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/local/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:53000:3000"
+    restart: unless-stopped

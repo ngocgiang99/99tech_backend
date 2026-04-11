@@ -31,7 +31,7 @@
 17. [Appendices](#17-appendices)
 
 **Related documents**
-- [`docs/flow-diagram.md`](./docs/flow-diagram.md) — Mermaid component, sequence, and state diagrams
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — Mermaid component, sequence, and state diagrams
 - [`IMPROVEMENTS.md`](./IMPROVEMENTS.md) — Forward-looking enhancements and known gaps
 
 ---
@@ -126,7 +126,7 @@ Provide an authoritative, low-latency leaderboard of the top 10 users ranked by 
 
 ### 4.2 High-Level Topology
 
-See [`docs/flow-diagram.md`](./docs/flow-diagram.md) for full Mermaid diagrams. Summary:
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for full Mermaid diagrams. Summary:
 
 ```
 Client (Browser)
@@ -677,9 +677,10 @@ One NestJS-on-Fastify instance comfortably holds 5,000 open SSE connections on a
 ```
 problem6/
 ├── README.md                  ← this document
+├── ARCHITECTURE.md             ← Mermaid diagrams of topology, layers, flows
 ├── IMPROVEMENTS.md
 ├── docs/
-│   └── flow-diagram.md
+│   └── runbooks/              ← ops runbooks (Redis SPOF, action-token rotation, …)
 ├── mise.toml                  ← tool + task management
 ├── Dockerfile                 ← multi-stage production build
 ├── docker-compose.yml         ← local infra (Postgres, Redis, tools)
@@ -1029,6 +1030,15 @@ ghcr.io/acme/problem6-scoreboard:prod
 - **IP-level rate limiting** is the responsibility of the ingress layer (nginx/ALB); problem6 enforces per-user quotas via `RateLimitGuard` only.
 - **`X-Cache-Status: hit|miss`** is emitted by `GET /v1/leaderboard/top` for k6 load-test assertions. The header is informational and MUST NOT be relied on by production clients.
 
+### 16.5 Local observability (dev only)
+
+`mise run obs:up` boots a developer-only Prometheus + Grafana pair under the `observability` compose profile. Prometheus scrapes the host-bound dev server at `host.docker.internal:3000/metrics` every 5 seconds; Grafana auto-loads the committed `scoreboard-overview.json` dashboard (8 panels covering HTTP traffic, write path, rate limiting, errors, and uptime). Default `mise run infra:up` is unaffected — opt in only when you need it.
+
+- **Prometheus**: `http://localhost:59090` (no auth)
+- **Grafana**: `http://localhost:53000` (anonymous admin — no login)
+
+This stack is strictly for local iteration. The configuration (anonymous admin, loopback-only binding, ephemeral Grafana state) is explicitly **not** transferable to `infra/helm/` or any production topology. Full documentation, troubleshooting, and the dashboard edit-and-commit workflow live in [`infra/local/README.md`](./infra/local/README.md).
+
 ---
 
 ## 17. Appendices
@@ -1049,7 +1059,7 @@ ghcr.io/acme/problem6-scoreboard:prod
 
 ### Appendix B — Related Files
 
-- [`docs/flow-diagram.md`](./docs/flow-diagram.md) — Mermaid sequence & component diagrams.
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — Mermaid sequence & component diagrams.
 - [`IMPROVEMENTS.md`](./IMPROVEMENTS.md) — Known gaps and forward-looking enhancements.
 - [`mise.toml`](./mise.toml) — Pinned toolchain and task definitions.
 - [`Dockerfile`](./Dockerfile) — Four-stage production build.

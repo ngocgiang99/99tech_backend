@@ -132,6 +132,27 @@ run = "docker compose down -v"
 description = "Tail logs from all services"
 run = "docker compose logs -f"
 
+# ─── Local observability (prometheus + grafana, opt-in) ─────────────────────
+# These tasks boot a dev-only metrics stack defined in compose.override.yml
+# under the `observability` profile. Default `mise run infra:up` is
+# unaffected. See infra/local/README.md for URLs, troubleshooting, and the
+# dashboard edit-and-commit workflow.
+[tasks."obs:up"]
+description = "Start the local observability stack (prometheus + grafana)"
+run = "docker compose --profile observability up -d prometheus grafana"
+
+[tasks."obs:down"]
+description = "Stop the local observability stack"
+run = "docker compose --profile observability stop prometheus grafana"
+
+[tasks."obs:logs"]
+description = "Follow prometheus + grafana logs"
+run = "docker compose --profile observability logs -f prometheus grafana"
+
+[tasks."obs:reload"]
+description = "Hot-reload the Prometheus config"
+run = "curl -X POST http://localhost:59090/-/reload"
+
 # ─── Docker image ────────────────────────────────────────────────────────────
 # ─── NATS JetStream helpers ──────────────────────────────────────────────────
 [tasks."nats:init"]

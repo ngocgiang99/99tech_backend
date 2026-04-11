@@ -1,0 +1,57 @@
+# ───────────────────────────────────────────────────────────────────────────
+# problem6 · Local Prometheus scrape config (dev only)
+#
+# WHY host.docker.internal:
+#   The canonical dev loop is `mise run dev`, which runs `pnpm nest start
+#   --watch` on the HOST at :3000 — not inside the compose network. To reach
+#   the host from inside the prometheus container, we use the Docker gateway
+#   address `host.docker.internal`. On macOS/Windows Docker Desktop resolves
+#   this automatically; on Linux the compose.override.yml adds the
+#   `extra_hosts: ["host.docker.internal:host-gateway"]` directive to make it
+#   resolve via the host-gateway pattern.
+#
+# DUAL TARGETS (host + compose-network):
+#   The scoreboard-api job below has TWO targets:
+#     1. `host.docker.internal:3000` — the host-bound dev server started by
+#        `mise run dev`. Used when developers iterate outside compose.
+#     2. `problem6-api:3000` — the containerized API started by
+#        `mise run infra:up:full` (which activates the `full` profile), reached
+#        via compose DNS on the shared `problem6_default` network. We target
+#        the `container_name` (`problem6-api`) rather than the service name
+#        (`api`) because the `api` service lives under the `full` profile
+#        while prometheus lives under `observability`; cross-profile service
+#        aliases are not always registered on the shared network, but
+#        container names always are.
+#   Prometheus marks the unreachable one DOWN; at any given moment at least
+#   one should be UP if the API is running anywhere. On the Targets page
+#   (http://localhost:59090/targets) a DOWN target with a clear hostname is
+#   easier to diagnose than a cryptic DNS failure would be.
+#
+# SCRAPE INTERVAL:
+#   5s is aggressive enough to see live changes when hand-testing (hit an
+#   endpoint, the counter moves within 5s). Production would be 15s or 30s;
+#   dev wants responsiveness. See design.md Decision 5.
+# ───────────────────────────────────────────────────────────────────────────
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+  external_labels:
+    application: scoreboard-api
+
+scrape_configs:
+  - job_name: scoreboard-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:3000
+        labels:
+          service: scoreboard-api
+          env: local
+          source: host
+      - targets:
+          - problem6-api:3000
+        labels:
+          service: scoreboard-api
+          env: local
+          source: compose

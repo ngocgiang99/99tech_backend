@@ -1,0 +1,18 @@
+# Grafana dashboard provider — loads every JSON file under
+# /var/lib/grafana/dashboards (mounted read-only from
+# infra/local/grafana/dashboards/). Dashboards are UI-read-only; edits
+# made in the UI are ephemeral — see design.md Decision 4 and
+# infra/local/README.md for the edit-and-commit workflow.
+apiVersion: 1
+
+providers:
+  - name: default
+    orgId: 1
+    folder: Scoreboard
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
