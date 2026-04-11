@@ -1,4 +1,16 @@
-## ADDED Requirements
+# rate-limiting
+
+## Purpose
+
+Defines how the Resources API throttles incoming HTTP traffic to protect the application from runaway clients and accidental hot loops. The capability owns the per-IP global rate-limit contract, the bypass policy (always-on loopback plus an env-configurable CIDR allow-list), the 429 response envelope (via the existing `error-handling` pipeline and `RateLimitError`), the IETF draft-7 `RateLimit-*` / `Retry-After` headers, the production safety assertion that refuses to boot with a wide-open allow-list, and the middleware ordering constraints inside `buildApp`.
+
+The producer is `src/middleware/rate-limit.ts` — a thin wrapper around `express-rate-limit` + `rate-limit-redis` that reuses the existing ioredis client (no new connection opened) and registers between `pinoHttp` and `express.json()` so 429s are logged, counted in HTTP metrics, and never pay the body-parse cost. The limiter's state lives in Redis so the three-replica prod compose stack from `horizontal-scaling-benchmark` enforces a single bucket per IP regardless of which replica nginx routes the request to.
+
+The capability is deliberately narrow: one middleware factory, four env vars, one `trust proxy` line in `buildApp`, unit + integration tests, and documentation. No file under `src/modules/`, `migrations/`, `benchmarks/scenarios/`, or `benchmarks/lib/` is modified. Existing endpoints are unchanged — any route MAY now return `429 RATE_LIMIT` when the bucket is exhausted, but the response envelope is byte-identical to every other 4xx.
+
+The `error-handling` capability already reserves `RATE_LIMIT` as a stable public error code and `RateLimitError` as a required `AppError` subclass; this capability is the producer that wires the actual middleware. Benchmark-time bypass is covered by the always-on loopback rule (host k6 runs) plus the env CIDR allow-list (in-compose k6 runs on Docker bridges where host published ports do not transit loopback on all platforms).
+
+## Requirements
 
 ### Requirement: Per-IP Rate Limit Middleware
 
