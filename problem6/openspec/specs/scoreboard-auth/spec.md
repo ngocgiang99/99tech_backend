@@ -58,7 +58,7 @@ JWT verification (HS256-based, internal shared secret) and HMAC action-token iss
 
 ### Requirement: Action token issuer endpoint mints HMAC-bound capability tokens
 
-`POST /v1/actions:issue-token` SHALL be JWT-protected. On a valid request with body `{ actionType: string }`, the endpoint SHALL: (1) generate a fresh `actionId` (UUID v4), (2) mint an HS256 JWT with claims `{ sub, aid, atp, mxd, iat, exp }` signed with `ACTION_TOKEN_SECRET`, (3) record `SET NX EX <ACTION_TOKEN_TTL_SECONDS> action:issued:<aid>` in Redis, and (4) return `{ actionId, actionToken, expiresAt, maxDelta }`.
+`POST /v1/actions:issue-token` SHALL be JWT-protected. On a valid request with body `{ actionType: string }`, the endpoint SHALL: (1) generate a fresh `actionId` (UUID v4), (2) mint an HS256 JWT with claims `{ sub, aid, atp, mxd, iat, exp }` signed with `ACTION_TOKEN_SECRET`, and (3) return `{ actionId, actionToken, expiresAt, maxDelta }`. The endpoint SHALL NOT write any per-issuance state to Redis, Postgres, or any other store; token authenticity is proven entirely by the HMAC signature at consumption time, and replay detection is the responsibility of the consumption path (`ActionTokenGuard` via `idempotency:action:<aid>` SETNX + the `uq_score_events_action` UNIQUE constraint).
 
 #### Scenario: Successful issuance returns a typed envelope
 - **GIVEN** a JWT-authenticated request with body `{ actionType: "level-complete" }`
@@ -74,11 +74,19 @@ JWT verification (HS256-based, internal shared secret) and HMAC action-token iss
 - **THEN** the response is `400 INVALID_REQUEST`
 - **AND** the response body's `error.message` names the offending field
 
-#### Scenario: Issued token is recorded in Redis
-- **GIVEN** a successful issuance
-- **WHEN** Redis is inspected
-- **THEN** the key `action:issued:<actionId>` exists with TTL `<ACTION_TOKEN_TTL_SECONDS>`
-- **AND** the value is the issuance metadata (or any non-empty marker)
+#### Scenario: Issuance does NOT write to Redis
+- **GIVEN** a Redis instance with a clean keyspace and a successful issuance of `actionId = A1`
+- **WHEN** Redis is inspected after the `200` response
+- **THEN** no key matching `action:issued:*` exists
+- **AND** no key matching `idempotency:action:*` exists (that key is only written by `ActionTokenGuard` during consumption)
+
+#### Scenario: Issuance succeeds when Redis is unreachable
+- **GIVEN** Redis is down (connection refused, timeout, or any transport error)
+- **AND** a JWT-authenticated request with body `{ actionType: "level-complete" }`
+- **WHEN** the handler runs
+- **THEN** the response is `200` with a valid token envelope
+- **AND** no Redis call is attempted during the issuance path
+- **AND** the minted token is consumable later (once Redis is restored) because its authenticity is proven by the HMAC signature, not by any Redis state
 
 #### Scenario: Raw action token is never logged
 - **GIVEN** a successful issuance

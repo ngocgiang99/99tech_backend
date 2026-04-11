@@ -138,14 +138,12 @@ sequenceDiagram
     participant U as User (Browser)
     participant LB as Load Balancer
     participant API as API (NestJS/Fastify)
-    participant R as Redis
 
     U->>LB: POST /v1/actions:issue-token { actionType }
     Note over U,LB: Header — Authorization: Bearer <jwt>
     LB->>API: forward
     API->>API: verify JWT (HS256 vs INTERNAL_JWT_SECRET, exp)
     API->>API: generate actionId (uuid v4)
-    API->>R: SET NX EX 300 action:issued:<actionId>
     API->>API: HMAC-sign { sub, aid, atp, mxd, iat, exp }
     API-->>U: 200 { actionId, actionToken, expiresAt, maxDelta }
 ```

@@ -2,14 +2,11 @@ import {
   Body,
   Controller,
   HttpCode,
-  Inject,
   Post,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import type { Redis } from 'ioredis';
 
-import { ConfigService } from '../../../../config';
 import { HmacActionTokenIssuer } from '../../../infrastructure/auth/hmac-action-token.issuer';
 import { JwtGuard } from '../../../infrastructure/auth/jwt.guard';
 import { IssueActionTokenSchema } from '../dto/issue-action-token.dto';
@@ -24,11 +21,7 @@ const ACTION_TYPE_MAX_DELTA: Record<string, number> = {
 @Controller('v1')
 @UseGuards(JwtGuard)
 export class ActionsController {
-  constructor(
-    private readonly issuer: HmacActionTokenIssuer,
-    @Inject('Redis') private readonly redis: Redis,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(private readonly issuer: HmacActionTokenIssuer) {}
 
   @Post('actions:issue-token')
   @HttpCode(200)
@@ -54,15 +47,6 @@ export class ActionsController {
       atp: dto.actionType,
       mxd,
     });
-
-    const ttl = this.config.get('ACTION_TOKEN_TTL_SECONDS');
-    await this.redis.set(
-      'action:issued:' + result.actionId,
-      '1',
-      'EX',
-      ttl,
-      'NX',
-    );
 
     // NEVER log result.actionToken — only actionId is safe to reference in logs
     return {

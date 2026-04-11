@@ -40,18 +40,6 @@ function makeIssuer(result?: {
   };
 }
 
-function makeRedis() {
-  return {
-    set: jest.fn().mockResolvedValue('OK'),
-  };
-}
-
-function makeConfig(ttl = 300) {
-  return {
-    get: jest.fn().mockReturnValue(ttl),
-  };
-}
-
 function makeRequest(userId = 'user-abc') {
   return { userId };
 }
@@ -63,9 +51,7 @@ function makeRequest(userId = 'user-abc') {
 describe('ActionsController.issueActionToken', () => {
   it('happy path returns actionId, actionToken, expiresAt, maxDelta', async () => {
     const issuer = makeIssuer();
-    const redis = makeRedis();
-    const config = makeConfig();
-    const controller = new ActionsController(issuer as never, redis as never, config as never);
+    const controller = new ActionsController(issuer as never);
 
     const result = await controller.issueActionToken(makeRequest(), { actionType: 'level-complete' });
 
@@ -82,28 +68,9 @@ describe('ActionsController.issueActionToken', () => {
     });
   });
 
-  it('stores actionId in Redis with NX + EX TTL', async () => {
-    const issuer = makeIssuer();
-    const redis = makeRedis();
-    const config = makeConfig(600);
-    const controller = new ActionsController(issuer as never, redis as never, config as never);
-
-    await controller.issueActionToken(makeRequest(), { actionType: 'level-complete' });
-
-    expect(redis.set).toHaveBeenCalledWith(
-      `action:issued:${VALID_UUID}`,
-      '1',
-      'EX',
-      600,
-      'NX',
-    );
-  });
-
   it('uses correct maxDelta for boss-defeat', async () => {
     const issuer = makeIssuer({ actionId: VALID_UUID, actionToken: 'token', expiresAt: new Date(), maxDelta: 500 });
-    const redis = makeRedis();
-    const config = makeConfig();
-    const controller = new ActionsController(issuer as never, redis as never, config as never);
+    const controller = new ActionsController(issuer as never);
 
     await controller.issueActionToken(makeRequest(), { actionType: 'boss-defeat' });
 
@@ -114,9 +81,7 @@ describe('ActionsController.issueActionToken', () => {
 
   it('uses correct maxDelta for achievement-unlock', async () => {
     const issuer = makeIssuer({ actionId: VALID_UUID, actionToken: 'token', expiresAt: new Date(), maxDelta: 1000 });
-    const redis = makeRedis();
-    const config = makeConfig();
-    const controller = new ActionsController(issuer as never, redis as never, config as never);
+    const controller = new ActionsController(issuer as never);
 
     await controller.issueActionToken(makeRequest(), { actionType: 'achievement-unlock' });
 
@@ -127,9 +92,7 @@ describe('ActionsController.issueActionToken', () => {
 
   it('throws ZodError for invalid actionType', async () => {
     const issuer = makeIssuer();
-    const redis = makeRedis();
-    const config = makeConfig();
-    const controller = new ActionsController(issuer as never, redis as never, config as never);
+    const controller = new ActionsController(issuer as never);
 
     await expect(
       controller.issueActionToken(makeRequest(), { actionType: 'unknown-action' }),
