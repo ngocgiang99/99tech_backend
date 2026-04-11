@@ -190,6 +190,15 @@ Supported filters:
 - **THEN** the next page does not duplicate any resource from the previous page
 - **AND** keyset ordering guarantees are preserved (newer resources appear on earlier pages, not mid-sequence)
 
+#### Scenario: Sort by name with a cursor compares names against names
+
+- **GIVEN** a client has seeded multiple resources with distinct names that sort alphabetically
+- **WHEN** the client issues `GET /resources?limit=N&sort=name` to fetch page 1
+- **AND** then follows the returned `nextCursor` to fetch page 2
+- **THEN** page 2's resources are all alphabetically after page 1's last resource
+- **AND** no resource appears on both pages
+- **AND** the backing SQL predicate compares the `name` column against a string value taken from the last row's `name`, not against a timestamp
+
 ### Requirement: Error Response Shape
 
 All error responses SHALL share exactly the shape `{error: {code, message, requestId, details?, errorId?}}` and SHALL NOT contain any additional fields. The HTTP status SHALL be the status mapped from the error `code` via the stable code-to-status mapping defined in the `error-handling` capability.
@@ -236,3 +245,50 @@ No other fields are permitted. The `message` field SHALL NOT contain implementat
 - **AND** the response status is `409 Conflict`
 - **AND** the response body is `{"error": {"code": "CONFLICT", "message": "Resource already exists", "requestId": "..."}}`
 - **AND** the response body does NOT leak the constraint name, column name, or offending value
+
+### Requirement: List cursor decoding is local to the raw repository
+
+The system SHALL decode the opaque base64url `cursor` query parameter into a typed `CursorPayload` variant exactly once per request, and that decoded value SHALL remain a local variable inside the raw-repository `list()` function body — it MUST NOT escape that function to the layers above (service, cached-repository decorator, controller, response serializer). When the raw repository produces a `nextCursor` for the next page, it SHALL encode the payload to the opaque string form before returning, so every layer above the raw repo's SQL body sees only the wire-shape string. The cached-repository decorator and the service SHALL NOT import any cursor codec functions.
+
+#### Scenario: Same-deployment cache key is stable for identical requests
+
+- **GIVEN** the running deployment has served a request for `GET /resources?limit=5&sort=-createdAt` and populated the response cache with the result
+- **WHEN** an identical request arrives on the same deployment
+- **THEN** the cache-key derivation produces bytes-identical key material to the first request
+- **AND** the request is served as a cache HIT
+- **AND** the response body matches the first request's body
+
+#### Scenario: Cached-repository decorator and service do not import cursor codec
+
+- **WHEN** the developer runs `grep -n 'decodeCursor\|encodeCursor' src/modules/resources/application/service.ts src/modules/resources/infrastructure/cached-repository.ts`
+- **THEN** zero matches are returned
+- **AND** the only production files importing `decodeCursor`/`encodeCursor` are inside the raw repository or its test
+
+### Requirement: List query cursor is a per-column-typed discriminated union
+
+The `CursorPayload` type SHALL be a discriminated union whose variants each carry a typed `value` field matching the SQL column the cursor is compared against. A timestamp-sorted cursor (`-createdAt`, `createdAt`, `-updatedAt`, `updatedAt`) SHALL carry `value: Date`. A name-sorted cursor (`name`, `-name`) SHALL carry `value: string` holding the last row's `name` (NOT a timestamp). Each variant SHALL implement a uniform codec interface exposing `encode`, `decode`, and `configFor` (sort-value to SQL sort config) members, so adding a new cursor variant is a purely additive change. The keyset-pagination predicate SHALL NOT use `as unknown`, `as never`, or any other escape-hatch cast to bypass the compiler's check that the cursor value type matches the column type.
+
+#### Scenario: Production resources module has zero escape-hatch casts
+
+- **GIVEN** the files `src/modules/resources/application/service.ts`, `src/modules/resources/infrastructure/repository.ts`, and `src/modules/resources/infrastructure/cached-repository.ts`
+- **WHEN** the developer runs `grep -n 'as unknown\|as never'` across those files
+- **THEN** zero real code matches are returned (comment-only mentions are permitted)
+- **AND** the defensive `as unknown` on the `JSON.parse` call in `src/modules/resources/infrastructure/cursor.ts` is allowed to remain — it narrows `any` to force a later validation gate, a tightening rather than a loosening
+
+#### Scenario: Adding an unhandled sort column breaks the build at multiple sites
+
+- **GIVEN** a developer adds a new literal (e.g. `'-priority'`) to the `SORT_VALUES` tuple in `src/modules/resources/schema.ts` without creating a new cursor variant or extending an existing codec
+- **WHEN** the project is type-checked with `pnpm typecheck`
+- **THEN** TypeScript reports errors at multiple sites: the `decodeCursor` switch, the `sortConfigFor` switch, and the repository's `nextCursor` construction switch each flag the new sort literal as not handled (exhaustiveness check against `never`)
+- **AND** the errors fire at compile time, not at runtime on the first request using the new sort
+
+### Requirement: Internal cursor wire format change is accepted at deploy cutover
+
+The encoded cursor string's inner JSON shape changes from a pre-refactor `{createdAt, id, sort}` to a discriminated union `{kind, value, id, sort}`. The HTTP query parameter `cursor` remains opaque base64url from the client's perspective, but cursors issued by the pre-refactor code SHALL be rejected by the post-refactor decoder, and post-refactor cache entries SHALL NOT share keys with any pre-refactor cache entry whose key material included a legacy-shape cursor. This is an accepted one-time regression at the deploy cutover — bounded in scope to clients mid-pagination and to cursor-keyed cache entries.
+
+#### Scenario: A legacy-shape cursor is rejected with VALIDATION
+
+- **GIVEN** a client holds a cursor encoded under the pre-refactor format (`{"createdAt":"...","id":"...","sort":"-createdAt"}` base64url-encoded)
+- **WHEN** the client sends that cursor to the post-refactor service in `GET /resources?cursor=<legacy>`
+- **THEN** the service responds `400 Bad Request` with error code `VALIDATION`
+- **AND** the client's recovery path is to re-request page 1 (omit the cursor)

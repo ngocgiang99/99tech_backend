@@ -1,10 +1,9 @@
 import { NotFoundError } from '../../../shared/errors.js';
 import type { Resource } from '../../../infrastructure/db/schema.js';
-import type { ResourceRepository, ListResult } from '../infrastructure/repository.js';
+import type { ResourceRepository } from '../infrastructure/repository.js';
 import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery } from '../schema.js';
 
 import type { RequestContext } from './request-context.js';
-import { decodeCursor, encodeCursor } from './cursor.js';
 
 export interface ListResponse {
   data: Resource[];
@@ -27,20 +26,10 @@ export class ResourceService {
   }
 
   async list(query: ListResourcesQuery, ctx?: RequestContext): Promise<ListResponse> {
-    // Decode cursor if present, inject decoded payload back into query
-    let effectiveQuery = query;
-    if (query.cursor) {
-      const decoded = decodeCursor(query.cursor, query.sort);
-      // Pass decoded payload as cursor for repository
-      effectiveQuery = { ...query, cursor: decoded as unknown as string };
-    }
-
-    const result: ListResult = await this.repo.list(effectiveQuery, ctx);
-
-    return {
-      data: result.data,
-      nextCursor: result.nextCursor ? encodeCursor(result.nextCursor) : null,
-    };
+    // Pass-through. The raw repository decodes the cursor on entry and
+    // encodes `nextCursor` on exit, so the service — and every layer
+    // above it — speaks only the opaque base64url string form.
+    return this.repo.list(query, ctx);
   }
 
   async update(id: string, input: UpdateResourceInput, ctx?: RequestContext): Promise<Resource> {

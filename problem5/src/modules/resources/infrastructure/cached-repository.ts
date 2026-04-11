@@ -26,9 +26,15 @@ export interface CachedRepositoryOptions {
   metrics?: MetricsRegistry;
 }
 
+/**
+ * Shape of a cached list entry. `nextCursor` is already the opaque
+ * encoded cursor string (the raw repository encodes on exit), so no
+ * extra serialize/deserialize work is needed here — the cache layer
+ * is blissfully unaware that the cursor has an internal structure.
+ */
 interface SerializedListEntry {
   data: SerializedResource[];
-  nextCursor: ListResult['nextCursor'];
+  nextCursor: string | null;
 }
 
 type SerializedResource = Omit<Resource, 'created_at' | 'updated_at'> & {

@@ -4,15 +4,35 @@ import { sql } from 'kysely';
 import { mapDbError } from '../../../infrastructure/db/error-mapper.js';
 import { InternalError } from '../../../shared/errors.js';
 import type { Database, Resource } from '../../../infrastructure/db/schema.js';
-import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery, SortValue } from '../schema.js';
-import type { CursorPayload } from '../application/cursor.js';
+import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery } from '../schema.js';
 import type { RequestContext } from '../application/request-context.js';
+
+import type { CursorPayload, SortConfig } from './cursor.js';
+import { sortConfigFor, decodeCursor, encodeCursor } from './cursor.js';
 
 export interface ListResult {
   data: Resource[];
-  nextCursor: CursorPayload | null;
+  /**
+   * Already-encoded next-page cursor (opaque base64url string), or `null`
+   * if this page is the last one. The repository is responsible for both
+   * decoding incoming cursors and encoding outgoing ones so the layers
+   * above it (cached decorator, service, controller) never touch the
+   * decoded `CursorPayload` — it is a local concept inside the SQL layer.
+   */
+  nextCursor: string | null;
 }
 
+/**
+ * Single repository interface for the resources module. `list` takes the
+ * request-shaped `ListResourcesQuery` (with an opaque base64url cursor
+ * string), which is also what the cached decorator uses for cache-key
+ * derivation. The raw implementation decodes `query.cursor` internally
+ * when building the SQL keyset predicate; the decoded `CursorPayload` is
+ * a purely local variable inside the SQL function and never escapes.
+ *
+ * Design rationale: `openspec/changes/type-clean-resources-list-query/design.md`
+ * §D1 — decoded cursor is local to the raw repository.
+ */
 export interface ResourceRepository {
   create(input: CreateResourceInput, ctx?: RequestContext): Promise<Resource>;
   findById(id: string, ctx?: RequestContext): Promise<Resource | null>;
@@ -23,54 +43,30 @@ export interface ResourceRepository {
 
 type ResourceSelectQuery = SelectQueryBuilder<Database, 'resources', Resource>;
 
-interface SortConfig {
-  column: 'created_at' | 'updated_at' | 'name';
-  direction: 'asc' | 'desc';
-  secondaryColumn: 'id';
-  secondaryDirection: 'asc' | 'desc';
-}
-
-function getSortConfig(sort: SortValue): SortConfig {
-  switch (sort) {
-    case '-createdAt':
-      return { column: 'created_at', direction: 'desc', secondaryColumn: 'id', secondaryDirection: 'desc' };
-    case 'createdAt':
-      return { column: 'created_at', direction: 'asc', secondaryColumn: 'id', secondaryDirection: 'asc' };
-    case '-updatedAt':
-      return { column: 'updated_at', direction: 'desc', secondaryColumn: 'id', secondaryDirection: 'desc' };
-    case 'updatedAt':
-      return { column: 'updated_at', direction: 'asc', secondaryColumn: 'id', secondaryDirection: 'asc' };
-    case '-name':
-      return { column: 'name', direction: 'desc', secondaryColumn: 'id', secondaryDirection: 'desc' };
-    case 'name':
-      return { column: 'name', direction: 'asc', secondaryColumn: 'id', secondaryDirection: 'asc' };
-  }
-}
-
-function applyCursorPredicate(
+/**
+ * Generic keyset-pagination predicate. `column` carries the specific column
+ * name the `value` belongs to, so the compiler can check `eb(column, op, value)`
+ * without a cast. The caller discriminates on `cursor.kind` to pick the
+ * matching column and value type.
+ *
+ * `V` is constrained to `Date | string` — the union of value types across
+ * the sortable columns (`created_at`, `updated_at` are `Date`; `name` is
+ * `string`). The caller always passes a concrete `Date` or `string` at
+ * each call site, so `V` stays monomorphic per call and Kysely typechecks
+ * `eb(column, op, value)` cleanly.
+ */
+function applyCursorPredicate<V extends Date | string>(
   qb: ResourceSelectQuery,
-  cursor: CursorPayload,
-  sortConfig: SortConfig,
+  column: 'created_at' | 'updated_at' | 'name',
+  op: '<' | '>',
+  value: V,
+  secondaryOp: '<' | '>',
+  secondaryId: string,
 ): ResourceSelectQuery {
-  const { column, direction, secondaryColumn, secondaryDirection } = sortConfig;
-  const op = direction === 'desc' ? '<' as const : '>' as const;
-  const secondaryOp = secondaryDirection === 'desc' ? '<' as const : '>' as const;
-
-  // For non-timestamp sorts, use createdAt as the cursor value
-  const cursorColValue: Date | string =
-    column === 'created_at' || column === 'updated_at'
-      ? new Date(cursor.createdAt)
-      : cursor.createdAt;
-
   return qb.where((eb) =>
     eb.or([
-      // First sort key changes
-      eb(column, op, cursorColValue as never),
-      // First sort key same, secondary (id) changes
-      eb.and([
-        eb(column, '=', cursorColValue as never),
-        eb(secondaryColumn, secondaryOp, cursor.id),
-      ]),
+      eb(column, op, value),
+      eb.and([eb(column, '=', value), eb('id', secondaryOp, secondaryId)]),
     ]),
   );
 }
@@ -120,8 +116,13 @@ export function createResourceRepository(db: Kysely<Database>): ResourceReposito
     async list(query: ListResourcesQuery): Promise<ListResult> {
       const { type, status, tag, ownerId, createdAfter, createdBefore, limit, cursor, sort } = query;
 
-      // cursor is already decoded CursorPayload (injected by service) or undefined
-      const cursorPayload = cursor as unknown as CursorPayload | undefined;
+      // Decode the cursor on entry — the decoded payload is a purely local
+      // variable inside this function and never escapes. Above this layer,
+      // every caller (service, cached decorator, controller) speaks only
+      // the opaque string form.
+      const decodedCursor: CursorPayload | undefined = cursor
+        ? decodeCursor(cursor, sort)
+        : undefined;
 
       let qb: ResourceSelectQuery = db.selectFrom('resources').selectAll();
 
@@ -146,11 +147,40 @@ export function createResourceRepository(db: Kysely<Database>): ResourceReposito
         qb = qb.where('created_at', '<', new Date(createdBefore));
       }
 
-      const sortConfig = getSortConfig(sort);
+      const sortConfig = sortConfigFor(sort);
 
-      // Apply keyset cursor predicate
-      if (cursorPayload) {
-        qb = applyCursorPredicate(qb, cursorPayload, sortConfig);
+      // Apply the keyset predicate. Dispatch on decodedCursor.kind so the
+      // compiler can pair each variant with a statically-typed value — the
+      // old code used `as never` here.
+      if (decodedCursor) {
+        const op = sortConfig.direction === 'desc' ? ('<' as const) : ('>' as const);
+        const secondaryOp = sortConfig.secondaryDirection === 'desc' ? ('<' as const) : ('>' as const);
+        switch (decodedCursor.kind) {
+          case 'timestamp':
+            qb = applyCursorPredicate(
+              qb,
+              sortConfig.column,
+              op,
+              decodedCursor.value,
+              secondaryOp,
+              decodedCursor.id,
+            );
+            break;
+          case 'name':
+            qb = applyCursorPredicate(
+              qb,
+              'name',
+              op,
+              decodedCursor.value,
+              secondaryOp,
+              decodedCursor.id,
+            );
+            break;
+          default: {
+            const _exhaustive: never = decodedCursor;
+            throw new InternalError(`Unhandled cursor kind: ${String(_exhaustive)}`);
+          }
+        }
       }
 
       // Apply sort + limit+1
@@ -167,13 +197,33 @@ export function createResourceRepository(db: Kysely<Database>): ResourceReposito
       const data = hasMore ? rows.slice(0, limit) : rows;
       const lastRow = data[data.length - 1];
 
-      let nextCursor: CursorPayload | null = null;
+      // Build the next-page cursor as the variant matching the sort, then
+      // encode it immediately so callers above this layer never see the
+      // decoded form. For name sort, `value` is the last row's `name` —
+      // this is the fix for the latent sort=name+cursor bug where the
+      // pre-refactor code put a timestamp there regardless.
+      let nextCursor: string | null = null;
       if (hasMore && lastRow) {
-        nextCursor = {
-          createdAt: lastRow.created_at.toISOString(),
-          id: lastRow.id,
-          sort,
-        };
+        let payload: CursorPayload;
+        switch (sort) {
+          case '-createdAt':
+          case 'createdAt':
+            payload = { kind: 'timestamp', value: lastRow.created_at, id: lastRow.id, sort };
+            break;
+          case '-updatedAt':
+          case 'updatedAt':
+            payload = { kind: 'timestamp', value: lastRow.updated_at, id: lastRow.id, sort };
+            break;
+          case 'name':
+          case '-name':
+            payload = { kind: 'name', value: lastRow.name, id: lastRow.id, sort };
+            break;
+          default: {
+            const _exhaustive: never = sort;
+            throw new InternalError(`Unhandled sort value: ${String(_exhaustive)}`);
+          }
+        }
+        nextCursor = encodeCursor(payload);
       }
 
       return { data, nextCursor };
