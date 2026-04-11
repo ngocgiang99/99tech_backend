@@ -1,6 +1,6 @@
-# Flow Diagrams — Scoreboard Module
+# Architecture — Scoreboard Module
 
-All diagrams below are [Mermaid](https://mermaid.js.org/). They render natively on GitHub, GitLab, and most modern markdown renderers.
+Hexagonal (ports-and-adapters) DDD architecture for the `problem6/` scoreboard service. All diagrams are [Mermaid](https://mermaid.js.org/) and render natively on GitHub, GitLab, and most modern markdown renderers.
 
 Diagrams:
 
@@ -78,55 +78,69 @@ graph LR
 ```mermaid
 graph TB
     subgraph InterfaceLayer[interface layer]
-        C1[REST controllers]
-        C2[SSE controller]
+        CS[ScoreboardController<br/>POST /v1/scores:increment]
+        CL[LeaderboardController<br/>GET /v1/leaderboard/top]
+        CA[ActionsController<br/>POST /v1/actions:issue-token]
+        CST[LeaderboardStreamController<br/>GET /v1/leaderboard/stream · SSE]
+        HC[HealthController<br/>/health · /ready · /metrics]
     end
 
     subgraph ApplicationLayer[application layer]
-        CMD[IncrementScoreHandler]
-        Q[GetTopLeaderboardHandler]
+        CMD[IncrementScoreHandler<br/>commands/]
+        Q[GetLeaderboardTopHandler<br/>queries/]
     end
 
     subgraph DomainLayer["domain layer · pure"]
         AGG[UserScore aggregate]
-        DS[Leaderboard domain service]
-        EV[ScoreCredited event]
+        VO[Value objects<br/>UserId · Score · ScoreDelta · ActionId]
+        EV[ScoreCredited · LeaderboardChanged events]
+        ERR[IdempotencyViolationError · InvalidArgumentError]
         P1P[/UserScoreRepository port/]
         P2P[/LeaderboardCache port/]
-        P3P[/IdempotencyStore port/]
         P4P[/DomainEventPublisher port/]
+        P5P[/LeaderboardUpdatesPort port/]
+        P6P[/ActionTokenIssuer port/]
     end
 
     subgraph InfraLayer["infrastructure layer · adapters"]
         KY[KyselyUserScoreRepository]
-        RC[RedisLeaderboardCache]
-        RI[RedisIdempotencyStore]
+        RC[RedisLeaderboardCache<br/>singleflight-wrapped getTop]
         JSP[JetStreamEventPublisher<br/>msgID = outbox.id]
         JSS[JetStreamSubscriber<br/>ephemeral push consumer]
-        OB[OutboxPublisher]
-        HM[HmacActionTokenVerifier]
+        LUA[LeaderboardUpdatesInProcessAdapter<br/>in-process pub/sub]
+        OB[OutboxPublisherService<br/>leader-elected · Redis lock]
+        HI[HmacActionTokenIssuer]
+        HV[HmacActionTokenVerifier]
+        JG[JwtGuard · ActionTokenGuard · RateLimitGuard]
+        HS[HealthService<br/>infrastructure/health/]
     end
 
-    C1 --> CMD
-    C1 --> Q
-    C2 --> Q
-    C2 --> JSS
+    CS --> CMD
+    CL --> Q
+    CA -.-> P6P
+    CST -.-> P5P
+    CST --> JSS
+    HC --> HS
     CMD --> AGG
     CMD --> P1P
-    CMD --> P3P
     Q --> P2P
+    Q --> P1P
     AGG -. emits .-> EV
 
     KY -. implements .-> P1P
     RC -. implements .-> P2P
-    RI -. implements .-> P3P
     JSP -. implements .-> P4P
+    LUA -. implements .-> P5P
+    HI -. implements .-> P6P
     OB --> JSP
+    OB --> JSS
 
     CMD --> P4P
 ```
 
-Dependency rule: **arrows only point inward** (toward `domain`). Infrastructure depends on domain; domain depends on nothing. Enforced in CI via `eslint-plugin-boundaries`.
+**Dependency rule**: arrows only point inward (toward `domain`). `domain` depends on nothing. `application` depends only on `domain` + `shared`. `infrastructure` implements ports declared in `domain` (and occasionally `application`). `interface` depends on `application` + `domain` (for port types and value objects) + `shared`. Enforced in CI via `eslint-plugin-boundaries`.
+
+**Framework-idiom exemption**: `interface` controllers import `JwtGuard` / `ActionTokenGuard` / `RateLimitGuard` from `infrastructure/auth/` and `infrastructure/rate-limit/` via NestJS `@UseGuards(...)`. These imports carry a per-line `// eslint-disable-next-line boundaries/dependencies -- NestJS guard via @UseGuards` comment. Everything else must go through a port.
 
 ---
 
@@ -157,40 +171,47 @@ sequenceDiagram
     autonumber
     participant U as User
     participant LB as Load Balancer
-    participant API as API
+    participant CT as ScoreboardController
+    participant H as IncrementScoreHandler
     participant R as Redis
     participant PG as Postgres
-    participant OB as Outbox Publisher
+    participant OB as OutboxPublisher
     participant JS as NATS JetStream (SCOREBOARD)
 
     U->>LB: POST /v1/scores:increment { actionId, actionToken, delta }
-    LB->>API: forward
-    API->>API: verify JWT
-    API->>API: verify action token (HMAC, exp, sub match, mxd ≥ delta)
-    API->>R: SET NX EX 86400 idempotency:action:<actionId>
+    LB->>CT: forward
+    CT->>CT: JwtGuard (HS256) · ActionTokenGuard (HMAC) · RateLimitGuard (Redis bucket)
+    CT->>H: execute(IncrementScoreCommand)
 
-    alt NX wins — first execution
-        API->>PG: BEGIN
-        API->>PG: INSERT score_events (uq action_id)
-        API->>PG: UPDATE user_scores SET total += delta
-        API->>PG: INSERT outbox_events (ScoreCredited)
-        API->>PG: COMMIT
-        API-->>U: 200 { newScore, rank, topChanged }
-    else NX loses — replay
-        API->>PG: SELECT cached outcome by action_id
-        API-->>U: 200 { cached result }
+    H->>PG: SELECT user_scores WHERE user_id = ? (aggregate hydrate)
+    H->>H: aggregate.credit(actionId, delta, occurredAt)
+    H->>PG: BEGIN
+
+    alt first execution — unique (action_id) wins
+        H->>PG: INSERT score_events (action_id UNIQUE)
+        H->>PG: UPSERT user_scores SET total = aggregate.total
+        H->>PG: INSERT outbox_events (ScoreCredited, LeaderboardChanged)
+        H->>PG: COMMIT
+        H->>R: ZADD leaderboard:global (score,userId)
+        H->>R: ZREVRANGE 0 9 (rank · topChanged)
+        Note over H,R: Redis cache errors are caught · rank/topChanged return null
+        H-->>CT: { kind: 'committed', newScore, rank, topChanged }
+        CT-->>U: 200 { newScore, rank, topChanged }
+    else replay — INSERT raises IdempotencyViolationError
+        Note over H: handler's own catch block — not the controller's
+        H->>PG: SELECT prior score_event WHERE action_id = ?
+        H-->>CT: { kind: 'idempotent-replay', newScore: prior.totalScoreAfter, rank: null, topChanged: null }
+        CT-->>U: 200 { newScore, rank: null, topChanged: null }
     end
 
-    Note over OB: runs continuously (leader-elected)
+    Note over OB: runs continuously · leader-elected via Redis lock "outbox:lock"
     OB->>PG: SELECT * FROM outbox_events WHERE published_at IS NULL
-    OB->>R: ZADD leaderboard:global <new_total> <userId>
-    OB->>R: ZREVRANGE 0 9 WITHSCORES (new top-10)
-    alt top-10 changed
-        OB->>JS: js.publish(scoreboard.leaderboard.updated, payload, msgID=outbox.id)
-        Note over JS: dedup_window = 2m, retry-safe
-    end
+    OB->>JS: js.publish(scoreboard.leaderboard.updated, payload, msgID=outbox.id)
+    Note over JS: dedup_window = 2m · retry-safe
     OB->>PG: UPDATE outbox_events SET published_at = now()
 ```
+
+**Key invariant**: `IncrementScoreHandler` owns its own idempotency recovery. The controller awaits `handler.execute(cmd)` once and returns — no `try/catch` on `IdempotencyViolationError` at the interface layer. The result type is a discriminated union: `{ kind: 'committed', ... } | { kind: 'idempotent-replay', ... }`.
 
 ---
 
