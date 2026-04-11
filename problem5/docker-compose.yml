@@ -115,6 +115,41 @@ services:
       - app-network
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Grafana dashboard — only active with: docker compose --profile metrics up -d
+  # UI at http://localhost:${GRAFANA_PORT:-3300}. Anonymous Viewer access is
+  # enabled for local dev; admin credentials are `admin / admin`. The Prometheus
+  # datasource and the Resources API dashboard are file-provisioned from
+  # ./deploy/grafana/ and reloaded on every container start, so
+  # `docker compose down -v` is safe.
+  #
+  # The default host port is 3300 (NOT Grafana's built-in 3000) because the
+  # Resources API dev server binds 3000 on the host. Override with GRAFANA_PORT
+  # if you want something else; Grafana's container port is always 3000.
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.4.3
+    container_name: resources-grafana
+    profiles:
+      - metrics
+    ports:
+      - "${GRAFANA_PORT:-3300}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    networks:
+      - app-network
+    restart: unless-stopped
+
 networks:
   app-network:
     driver: bridge
@@ -125,4 +160,6 @@ volumes:
   redis-data:
     driver: local
   prometheus-data:
+    driver: local
+  grafana-data:
     driver: local

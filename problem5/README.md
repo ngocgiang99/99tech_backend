@@ -410,6 +410,7 @@ All variables are listed in `.env.example` with their defaults.
 | `SHUTDOWN_TIMEOUT_MS`           | No       | `10000`                                            | Max ms to drain before force-exit   |
 | `METRICS_ENABLED`               | No       | `true`                                             | Master toggle for Prometheus metrics. When `false`, `/metrics` is not mounted and the HTTP/cache/db instrumentation does nothing. |
 | `METRICS_DEFAULT_METRICS`       | No       | `true`                                             | Whether to collect `prom-client`'s default Node.js metrics (CPU, heap, event loop lag, GC). Disable for narrower `/metrics` output. |
+| `GRAFANA_PORT`                  | No       | `3300`                                             | Host port for Grafana (only published when the `metrics` compose profile is active). Defaults to `3300` because the Resources API dev server already binds host `:3000`; override if `3300` conflicts with something else. Grafana's container port is always `3000`. |
 | `LOG_SCRUBBER_EXTRA_HEADERS`    | No       | (empty)                                            | Comma-separated extra header names to redact from error logs in addition to the built-in denylist (`authorization`, `cookie`, `set-cookie`, `x-api-key`, `x-auth-token`, `proxy-authorization`). Case-insensitive. |
 
 ### Database Migrations
@@ -573,6 +574,70 @@ open http://localhost:9090
 The scrape config at `deploy/prometheus/prometheus.yml` is deliberately
 minimal — one job, no recording rules, no alerts. Extend it in a follow-up
 change when specific SLOs are worth codifying.
+
+### Grafana dashboard
+
+The same `metrics` compose profile also brings up a pinned
+`grafana/grafana:10.4.3` container with one hand-authored dashboard
+("Resources API"). Grafana reads its datasource and dashboard from files
+committed under `deploy/grafana/`, so there is no wizard to click through
+and `docker compose down -v` is always safe — the next `up` re-provisions
+everything identically.
+
+```bash
+# Bring up api + postgres + redis + prometheus + grafana
+docker compose --profile metrics up -d
+
+# Open the dashboard (anonymous Viewer access; no login required)
+open http://localhost:3300
+```
+
+Grafana publishes on host port **3300** by default, not its built-in
+`3000`, because the Resources API dev server already binds `localhost:3000`
+on this stack — sharing one host port between the API and Grafana would
+mean stopping one to use the other. `3300` was chosen as a nearby
+non-conflicting default that still fits the usual "first browser bookmark"
+pattern. Grafana's container port is unchanged (`3000`); only the host
+mapping differs. Override with `GRAFANA_PORT` in `.env` if `3300` also
+conflicts with something on your machine.
+
+Anonymous read-only access is enabled for local dev so the path from
+"opened the repo" to "seeing a live dashboard" is one command and one URL.
+For interactive editing (panel tweaks, ad-hoc queries, time range changes
+that persist across refreshes), sign in with the default credentials
+`admin / admin` — Grafana will prompt for a password change on first login,
+which can be skipped or satisfied. Interactive edits on the provisioned
+dashboard are intentionally not persisted back to the JSON file; edit the
+canonical file at `deploy/grafana/dashboards/resources-api.json` and
+restart the container (`docker compose --profile metrics restart grafana`)
+to evolve the dashboard.
+
+The dashboard has eight panels arranged in a 2-column, 4-row grid — one
+screen at 1920×1080 — and answers the most common operational questions:
+
+| # | Panel                                        | Question it answers                                                           |
+|---|----------------------------------------------|-------------------------------------------------------------------------------|
+| 1 | Request Rate by Route                        | Are requests arriving, and which routes are hot?                              |
+| 2 | Latency by Route (`$percentile`)             | How slow is the tail per route, right now and over the last 15 m? Dashboard-level `percentile` variable (`p50`/`p95`/`p99`, default `p95`) picks the percentile without editing JSON. |
+| 3 | 5xx Error Rate                               | Is the service actually broken, or just declining client requests?            |
+| 4 | Cache Hit Rate                               | Is the cache earning its keep on `GET` traffic?                               |
+| 5 | Cache Operations by Type and Result          | Where are cache hits/misses/errors coming from — `get`/`set`/`del`/`incr`?    |
+| 6 | DB Query Duration by Operation (`$percentile`) | Which DB operations are slow, and is the tail growing? Same `percentile` variable as panel 2. |
+| 7 | DB Pool Utilization                          | Is the connection pool saturated or hitting `waiting`?                        |
+| 8 | Node.js Runtime                              | Event loop lag p99, heap, RSS — is Node itself healthy under load?            |
+
+The Prometheus UI at `http://localhost:9090` remains available alongside —
+Grafana is a friendly default view on top of the metrics, not a replacement
+for raw PromQL when you need it. See the cheat sheet below for ad-hoc
+queries to type there.
+
+**Production caveat.** Do NOT run Grafana with
+`GF_AUTH_ANONYMOUS_ENABLED=true` in production. The anonymous-Viewer default
+is calibrated for a local-dev compose stack bound to `localhost`. On a
+shared or internet-reachable deployment, turn anonymous access off, set a
+real admin password (`GF_SECURITY_ADMIN_PASSWORD`), and put Grafana behind a
+reverse proxy with real authentication — the same advice applies to
+`/metrics` itself (see "Production considerations" below).
 
 ### PromQL cheat sheet
 
