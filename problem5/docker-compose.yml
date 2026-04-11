@@ -66,6 +66,27 @@ services:
       - app-network
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Benchmark runner — only active with: docker compose --profile bench up
+  # Runs the smoke scenario by default. For other scenarios, override the
+  # command: docker compose --profile bench run k6 run benchmarks/scenarios/read-load.js
+  # ---------------------------------------------------------------------------
+  k6:
+    image: grafana/k6:latest
+    container_name: resources-k6
+    profiles:
+      - bench
+    volumes:
+      - ./benchmarks:/benchmarks
+    command: run /benchmarks/scenarios/smoke.js
+    environment:
+      - BASE_URL=http://api:3000
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - app-network
+
 networks:
   app-network:
     driver: bridge

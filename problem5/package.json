@@ -22,7 +22,17 @@
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "db:migrate": "kysely migrate:latest",
     "db:migrate:down": "kysely migrate:rollback",
-    "db:reset": "kysely migrate:rollback && kysely migrate:latest"
+    "db:reset": "kysely migrate:rollback && kysely migrate:latest",
+    "bench:seed": "tsx benchmarks/seed/seed.ts",
+    "bench:flush-cache": "tsx benchmarks/seed/flush-cache.ts",
+    "bench:smoke": "k6 run benchmarks/scenarios/smoke.js",
+    "bench:read": "k6 run benchmarks/scenarios/read-load.js",
+    "bench:write": "k6 run benchmarks/scenarios/write-load.js",
+    "bench:mixed": "k6 run benchmarks/scenarios/mixed.js",
+    "bench:spike": "k6 run benchmarks/scenarios/spike.js",
+    "bench:stress": "k6 run benchmarks/scenarios/stress.js",
+    "bench:cache:cold": "k6 run benchmarks/scenarios/cache-cold.js",
+    "bench:cache:warm": "k6 run benchmarks/scenarios/cache-warm.js"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

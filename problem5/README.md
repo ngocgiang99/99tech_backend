@@ -246,6 +246,91 @@ port bindings from a previous run: `docker ps -a` and remove orphans.
 
 ---
 
+## Benchmarks
+
+Load scenarios live in `benchmarks/` and are driven by [k6](https://k6.io/)
+(pinned to 0.56.0 via `mise.toml`). Results from a canonical run are
+captured in [`Benchmark.md`](./Benchmark.md).
+
+### Prerequisites
+
+```bash
+mise install              # installs Node 22 + pnpm 9 + k6 0.56.0
+mise run up               # start api + postgres + redis
+mise run health           # confirm /healthz is 200
+pnpm bench:seed           # insert 10 000 resources and write benchmarks/seed/ids.json
+```
+
+`bench:seed` is idempotent — running it twice does not duplicate rows.
+Pass `--clear` to truncate the bench pool before reseeding.
+
+### Scenarios
+
+| Command | What it runs |
+|---|---|
+| `pnpm bench:smoke` | 1 VU × 30 s sanity check; confirms the bench tooling is wired. |
+| `pnpm bench:read` | `ramping-arrival-rate` 0 → 10k GET RPS over 5 min; records `X-Cache` telemetry. |
+| `pnpm bench:write` | `constant-arrival-rate` 100 RPS, 60/30/10 POST/PATCH/DELETE blend. |
+| `pnpm bench:mixed` | 95% GET / 5% write — matches the brief's primary workload. |
+| `pnpm bench:spike` | 1k → 10k RPS over 10 s, 30 s hold, ramp down. |
+| `pnpm bench:stress` | Ramps 1k RPS/min up to 10k RPS to find the saturation point. |
+| `pnpm bench:cache:cold` | Same shape as `bench:read` but with Redis flushed. For a true cold baseline, also restart the API with `CACHE_ENABLED=false`. |
+| `pnpm bench:cache:warm` | Pre-warms the cache via `setup()` (one GET per seed id) before running the read-load shape. |
+| `pnpm bench:flush-cache` | Standalone Redis `FLUSHDB` — uses `REDIS_URL`. |
+
+Every scenario enforces thresholds (`http_req_failed<0.01`,
+`http_req_duration{expected_response:true} p(99)<500`) via the shared
+`benchmarks/lib/thresholds.js` module. k6 exits non-zero on threshold
+violation, so the same scripts can run in a CI smoke job later.
+
+### Running the full cache comparison
+
+```bash
+# 1. Seed 10 000 resources
+pnpm bench:seed
+
+# 2. Cold baseline — Redis flushed AND CACHE_ENABLED=false on the API
+docker exec resources-redis redis-cli FLUSHDB
+# Restart the api container with CACHE_ENABLED=false (docker run / compose override)
+pnpm bench:cache:cold
+
+# 3. Warm baseline — cache enabled, setup() pre-warms every id
+docker exec resources-redis redis-cli FLUSHDB
+# Restart the api container with CACHE_ENABLED=true (default)
+pnpm bench:cache:warm
+```
+
+The canonical Apple M4 Pro run captured in `Benchmark.md` shows a **~2× p50
+latency improvement** with the warm cache (196 ms vs 403 ms) — the cache
+earns its place on latency more than on raw RPS on a co-located laptop.
+
+### Docker Compose profile (no local k6 install)
+
+For reviewers without `mise install`, the `bench` compose profile runs k6
+inside a container against the API service on the same compose network:
+
+```bash
+# Start the stack (api + postgres + redis)
+docker compose up -d
+
+# Run the smoke scenario from a k6 sidecar — no local k6 needed
+docker compose --profile bench run --rm k6 run /benchmarks/scenarios/smoke.js
+```
+
+The profile mounts `./benchmarks` into the container at `/benchmarks` and
+sets `BASE_URL=http://api:3000`, so any scenario script works the same way.
+
+### Resetting after a run
+
+Bench rows accumulate in Postgres. For a clean slate:
+
+```bash
+mise run fresh          # down -v + up --build + re-migrate
+pnpm bench:seed         # re-seed if you want to re-run
+```
+
+---
+
 ## Architecture
 
 The `src/` tree is organized into layered directories that make the dependency direction visible at a glance:
