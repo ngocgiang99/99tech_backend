@@ -63,3 +63,8 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+
+# Claude Code / BMAD tool output (local only)
+.claude
+_bmad
+_bmad-output
