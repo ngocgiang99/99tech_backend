@@ -73,11 +73,8 @@ description = "End-to-end tests against the docker-compose stack"
 run = "pnpm jest --config jest.e2e.config.ts --runInBand"
 
 [tasks."test:coverage"]
-description = "Unit + integration with coverage — fails build if <80% lines/branches/functions/statements"
-run = """
-pnpm jest --coverage \
-  --coverageThreshold='{"global":{"lines":80,"branches":80,"functions":80,"statements":80}}'
-"""
+description = "Unit tests with coverage — fails build if <80% lines/branches/functions/statements (domain: 100%)"
+run = "pnpm jest --config jest.config.ts --coverage"
 
 [tasks."test:load"]
 description = "k6 load test — 10k SSE connections + write burst"

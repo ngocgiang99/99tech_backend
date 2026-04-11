@@ -49,6 +49,10 @@ function makeConfig(ttl = 300) {
   };
 }
 
+function makeCounter() {
+  return { inc: jest.fn() };
+}
+
 function buildCtx(overrides: {
   userId?: string | null; // null means omit userId from request (simulate missing)
   actionId?: string;
@@ -99,7 +103,7 @@ describe('ActionTokenGuard', () => {
       const verifier = makeVerifier('resolve');
       const redis = makeRedis('OK');
       const config = makeConfig();
-      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never);
+      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never, makeCounter() as never);
 
       const { ctx, request } = buildCtx();
       const result = await guard.canActivate(ctx);
@@ -125,7 +129,7 @@ describe('ActionTokenGuard', () => {
       const verifier = makeVerifier('resolve');
       const redis = makeRedis('OK');
       const config = makeConfig();
-      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never);
+      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never, makeCounter() as never);
 
       const { ctx } = buildCtx({ userId: null });
 
@@ -140,7 +144,7 @@ describe('ActionTokenGuard', () => {
       const verifier = makeVerifier('reject');
       const redis = makeRedis('OK');
       const config = makeConfig();
-      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never);
+      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never, makeCounter() as never);
 
       const { ctx } = buildCtx();
       const err = await catchError(() => guard.canActivate(ctx));
@@ -158,7 +162,7 @@ describe('ActionTokenGuard', () => {
       };
       const redis = makeRedis('OK');
       const config = makeConfig();
-      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never);
+      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never, makeCounter() as never);
 
       const { ctx } = buildCtx({ userId: 'user-2' });
       const err = await catchError(() => guard.canActivate(ctx));
@@ -176,7 +180,7 @@ describe('ActionTokenGuard', () => {
       };
       const redis = makeRedis('OK');
       const config = makeConfig();
-      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never);
+      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never, makeCounter() as never);
 
       const { ctx } = buildCtx({ actionId: 'wrong-aid' });
       const err = await catchError(() => guard.canActivate(ctx));
@@ -192,7 +196,7 @@ describe('ActionTokenGuard', () => {
       };
       const redis = makeRedis('OK');
       const config = makeConfig();
-      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never);
+      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never, makeCounter() as never);
 
       const { ctx } = buildCtx({ delta: 9999 });
       const err = await catchError(() => guard.canActivate(ctx));
@@ -206,7 +210,7 @@ describe('ActionTokenGuard', () => {
       const verifier = makeVerifier('resolve');
       const redis = makeRedis('OK');
       const config = makeConfig();
-      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never);
+      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never, makeCounter() as never);
 
       const { ctx } = buildCtx();
       const result = await guard.canActivate(ctx);
@@ -220,7 +224,7 @@ describe('ActionTokenGuard', () => {
       const verifier = makeVerifier('resolve');
       const redis = makeRedis(null);
       const config = makeConfig();
-      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never);
+      const guard = new ActionTokenGuard(verifier as never, redis as never, config as never, makeCounter() as never);
 
       const { ctx } = buildCtx();
       const err = await catchError(() => guard.canActivate(ctx));

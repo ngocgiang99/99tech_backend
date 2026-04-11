@@ -17,7 +17,7 @@ export class RedisTokenBucket implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    this.sha = await this.redis.script('LOAD', this.luaSource) as string;
+    this.sha = (await this.redis.script('LOAD', this.luaSource)) as string;
   }
 
   async consume(
@@ -46,12 +46,9 @@ export class RedisTokenBucket implements OnModuleInit {
         nowMs,
       );
     } catch (err: unknown) {
-      if (
-        err instanceof Error &&
-        err.message.includes('NOSCRIPT')
-      ) {
+      if (err instanceof Error && err.message.includes('NOSCRIPT')) {
         // Script was flushed from Redis — reload and retry once
-        this.sha = await this.redis.script('LOAD', this.luaSource) as string;
+        this.sha = (await this.redis.script('LOAD', this.luaSource)) as string;
         return await this.redis.evalsha(
           this.sha,
           1,

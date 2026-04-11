@@ -2,11 +2,14 @@ import {
   CanActivate,
   ExecutionContext,
   HttpException,
+  Inject,
   Injectable,
 } from '@nestjs/common';
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { Counter } from 'prom-client';
 
 import { ConfigService } from '../../../config';
+import { METRIC_RATE_LIMIT_HITS_TOTAL } from '../../../shared/metrics';
 
 import { RedisTokenBucket } from './redis-token-bucket';
 
@@ -27,12 +30,15 @@ export class RateLimitGuard implements CanActivate {
   constructor(
     private readonly bucket: RedisTokenBucket,
     private readonly config: ConfigService,
+    @Inject(METRIC_RATE_LIMIT_HITS_TOTAL)
+    private readonly rateLimitHitsTotal: Counter<string>,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     globalCount++;
 
     if (globalCount > GLOBAL_LIMIT) {
+      this.rateLimitHitsTotal.inc({ outcome: 'circuit_open' });
       throw new HttpException(
         { statusCode: 503, code: 'TEMPORARILY_UNAVAILABLE' },
         503,
@@ -55,16 +61,16 @@ export class RateLimitGuard implements CanActivate {
     const result = await this.bucket.consume(userId, 20, refillPerSec);
 
     if (!result.allowed) {
-      const retryAfterSeconds = result.retryAfterMs !== undefined
-        ? Math.ceil(result.retryAfterMs / 1000)
-        : 1;
+      const retryAfterSeconds =
+        result.retryAfterMs !== undefined
+          ? Math.ceil(result.retryAfterMs / 1000)
+          : 1;
       void response.header('Retry-After', String(retryAfterSeconds));
-      throw new HttpException(
-        { statusCode: 429, code: 'RATE_LIMITED' },
-        429,
-      );
+      this.rateLimitHitsTotal.inc({ outcome: 'rejected' });
+      throw new HttpException({ statusCode: 429, code: 'RATE_LIMITED' }, 429);
     }
 
+    this.rateLimitHitsTotal.inc({ outcome: 'allowed' });
     return true;
   }
 }

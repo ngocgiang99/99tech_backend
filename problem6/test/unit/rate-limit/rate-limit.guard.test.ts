@@ -24,6 +24,10 @@ function makeBucket(result: { allowed: boolean; retryAfterMs?: number }) {
   return { consume: jest.fn().mockResolvedValue(result) };
 }
 
+function makeCounter() {
+  return { inc: jest.fn() };
+}
+
 // ---------------------------------------------------------------------------
 // Helper: fresh require to reset module-level globalCount
 // ---------------------------------------------------------------------------
@@ -54,12 +58,14 @@ describe('RateLimitGuard', () => {
       const Guard = await freshGuard();
       const bucket = makeBucket({ allowed: true });
       const config = makeConfig(10);
-      const guard = new Guard(bucket as never, config as never);
+      const counter = makeCounter();
+      const guard = new Guard(bucket as never, config as never, counter as never);
 
       const result = await guard.canActivate(buildCtx('user-1'));
 
       expect(result).toBe(true);
       expect(bucket.consume).toHaveBeenCalledWith('user-1', 20, 10);
+      expect(counter.inc).toHaveBeenCalledWith({ outcome: 'allowed' });
     });
   });
 
@@ -68,7 +74,8 @@ describe('RateLimitGuard', () => {
       const Guard = await freshGuard();
       const bucket = makeBucket({ allowed: false, retryAfterMs: 500 });
       const config = makeConfig(10);
-      const guard = new Guard(bucket as never, config as never);
+      const counter = makeCounter();
+      const guard = new Guard(bucket as never, config as never, counter as never);
 
       const ctx = buildCtx('user-2');
       const response = ctx.switchToHttp().getResponse() as { header: jest.Mock };
@@ -80,13 +87,15 @@ describe('RateLimitGuard', () => {
       expect(ex.getStatus()).toBe(429);
       expect(ex.getResponse().code).toBe('RATE_LIMITED');
       expect(response.header).toHaveBeenCalledWith('Retry-After', '1');
+      expect(counter.inc).toHaveBeenCalledWith({ outcome: 'rejected' });
     });
 
     it('defaults Retry-After to 1 second when retryAfterMs is undefined', async () => {
       const Guard = await freshGuard();
       const bucket = makeBucket({ allowed: false });
       const config = makeConfig(10);
-      const guard = new Guard(bucket as never, config as never);
+      const counter = makeCounter();
+      const guard = new Guard(bucket as never, config as never, counter as never);
 
       const ctx = buildCtx('user-3');
       const response = ctx.switchToHttp().getResponse() as { header: jest.Mock };
@@ -103,7 +112,8 @@ describe('RateLimitGuard', () => {
       const Guard = await freshGuard();
       const bucket = makeBucket({ allowed: true });
       const config = makeConfig(10);
-      const guard = new Guard(bucket as never, config as never);
+      const counter = makeCounter();
+      const guard = new Guard(bucket as never, config as never, counter as never);
 
       const err = await catchError(guard.canActivate(buildCtx(undefined)));
       expect(err.message).toContain('JwtGuard must run first');
@@ -116,7 +126,8 @@ describe('RateLimitGuard', () => {
       // Use a bucket that always admits, so the guard reaches the count check
       const bucket = makeBucket({ allowed: true });
       const config = makeConfig(10);
-      const guard = new Guard(bucket as never, config as never);
+      const counter = makeCounter();
+      const guard = new Guard(bucket as never, config as never, counter as never);
 
       const ctx = buildCtx('user-circuit');
 
@@ -131,6 +142,7 @@ describe('RateLimitGuard', () => {
       const ex = err as any;
       expect(ex.getStatus()).toBe(503);
       expect(ex.getResponse().code).toBe('TEMPORARILY_UNAVAILABLE');
+      expect(counter.inc).toHaveBeenCalledWith({ outcome: 'circuit_open' });
     });
   });
 });

@@ -1,14 +1,20 @@
 import { randomUUID } from 'node:crypto';
 
 import { Inject, Injectable } from '@nestjs/common';
+import { trace, SpanStatusCode } from '@opentelemetry/api';
 
 import { DATABASE, type Database } from '../../../../database';
 import { IdempotencyViolationError } from '../../../domain/errors/idempotency-violation.error';
 import { ScoreCredited } from '../../../domain/events/score-credited.event';
-import type { ScoreEventRecord, UserScoreRepository } from '../../../domain/ports/user-score.repository';
+import type {
+  ScoreEventRecord,
+  UserScoreRepository,
+} from '../../../domain/ports/user-score.repository';
 import { UserScore } from '../../../domain/user-score.aggregate';
 import { ActionId } from '../../../domain/value-objects/action-id';
 import { UserId } from '../../../domain/value-objects/user-id';
+
+const tracer = trace.getTracer('scoreboard');
 
 interface PgDatabaseError {
   code?: string;
@@ -35,11 +41,15 @@ export class KyselyUserScoreRepository implements UserScoreRepository {
       totalScore: Number(row.total_score),
       lastActionId: row.last_action_id,
       updatedAt:
-        row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at),
+        row.updated_at instanceof Date
+          ? row.updated_at
+          : new Date(row.updated_at),
     });
   }
 
-  async findScoreEventByActionId(actionId: ActionId): Promise<ScoreEventRecord | null> {
+  async findScoreEventByActionId(
+    actionId: ActionId,
+  ): Promise<ScoreEventRecord | null> {
     // v1 simplification (design.md Decision 4): totalScoreAfter reads the CURRENT
     // user_scores.total_score, not the total at the time of the original credit.
     // Post-credit drift is accepted for MVP — the replay path only needs an approximate score.
@@ -65,55 +75,68 @@ export class KyselyUserScoreRepository implements UserScoreRepository {
       userId: row.user_id,
       delta: row.delta,
       totalScoreAfter: Number(row.total_score),
-      occurredAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
+      occurredAt:
+        row.created_at instanceof Date
+          ? row.created_at
+          : new Date(row.created_at),
     };
   }
 
   async credit(aggregate: UserScore, event: ScoreCredited): Promise<void> {
-    try {
-      await this.db.transaction().execute(async (trx) => {
-        await trx
-          .selectFrom('user_scores')
-          .where('user_id', '=', event.userId)
-          .select('user_id')
-          .forUpdate()
-          .executeTakeFirst();
+    await tracer.startActiveSpan('db.tx', async (span) => {
+      try {
+        await this.db.transaction().execute(async (trx) => {
+          await trx
+            .selectFrom('user_scores')
+            .where('user_id', '=', event.userId)
+            .select('user_id')
+            .forUpdate()
+            .executeTakeFirst();
 
-        await trx
-          .insertInto('score_events')
-          .values({
-            id: randomUUID(),
-            user_id: event.userId,
-            action_id: event.actionId,
-            delta: event.delta,
-            created_at: event.occurredAt,
-          })
-          .execute();
+          await trx
+            .insertInto('score_events')
+            .values({
+              id: randomUUID(),
+              user_id: event.userId,
+              action_id: event.actionId,
+              delta: event.delta,
+              created_at: event.occurredAt,
+            })
+            .execute();
 
-        await trx
-          .insertInto('user_scores')
-          .values({
-            user_id: event.userId,
-            total_score: event.delta,
-            last_action_id: event.actionId,
-            updated_at: aggregate.updatedAt,
-          })
-          .onConflict((oc) =>
-            oc.column('user_id').doUpdateSet({
-              total_score: (eb) =>
-                eb('user_scores.total_score', '+', eb.ref('excluded.total_score')),
-              last_action_id: (eb) => eb.ref('excluded.last_action_id'),
-              updated_at: (eb) => eb.ref('excluded.updated_at'),
-            }),
-          )
-          .execute();
-      });
-    } catch (error) {
-      if (isUniqueViolationOnActionId(error)) {
-        throw new IdempotencyViolationError(event.actionId);
+          await trx
+            .insertInto('user_scores')
+            .values({
+              user_id: event.userId,
+              total_score: event.delta,
+              last_action_id: event.actionId,
+              updated_at: aggregate.updatedAt,
+            })
+            .onConflict((oc) =>
+              oc.column('user_id').doUpdateSet({
+                total_score: (eb) =>
+                  eb(
+                    'user_scores.total_score',
+                    '+',
+                    eb.ref('excluded.total_score'),
+                  ),
+                last_action_id: (eb) => eb.ref('excluded.last_action_id'),
+                updated_at: (eb) => eb.ref('excluded.updated_at'),
+              }),
+            )
+            .execute();
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: msg });
+        if (isUniqueViolationOnActionId(error)) {
+          throw new IdempotencyViolationError(event.actionId);
+        }
+        throw error;
+      } finally {
+        span.end();
       }
-      throw error;
-    }
+    });
   }
 }
 
@@ -125,5 +148,8 @@ function isUniqueViolationOnActionId(error: unknown): boolean {
   if (e.code !== '23505') {
     return false;
   }
-  return typeof e.constraint === 'string' && e.constraint.includes('score_events_action');
+  return (
+    typeof e.constraint === 'string' &&
+    e.constraint.includes('score_events_action')
+  );
 }

@@ -18,7 +18,10 @@ function loadConfig(): ConfigService {
         `[config] Environment validation failed:\n${lines.join('\n')}`,
       );
     } else {
-      console.error('[config] Unexpected error while parsing environment:', err);
+      console.error(
+        '[config] Unexpected error while parsing environment:',
+        err,
+      );
     }
     process.exit(1);
   }

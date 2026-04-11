@@ -23,7 +23,10 @@ export class JwksCache {
   async verify(token: string): Promise<JWTPayload> {
     if (!this.jwks) {
       const options: RemoteJWKSetOptions = {};
-      this.jwks = jose.createRemoteJWKSet(new URL(this.config.get('JWKS_URL')), options);
+      this.jwks = jose.createRemoteJWKSet(
+        new URL(this.config.get('JWKS_URL')),
+        options,
+      );
     }
 
     try {

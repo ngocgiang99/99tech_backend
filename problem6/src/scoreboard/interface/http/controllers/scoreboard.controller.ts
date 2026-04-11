@@ -1,16 +1,14 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   HttpCode,
-  HttpException,
   Inject,
   InternalServerErrorException,
   Post,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ZodError } from 'zod';
+import type { Counter } from 'prom-client';
 
 import {
   IncrementScoreHandler,
@@ -19,7 +17,6 @@ import {
 } from '../../../application/commands';
 import { IncrementScoreCommand } from '../../../application/commands/increment-score.command';
 import { IdempotencyViolationError } from '../../../domain/errors/idempotency-violation.error';
-import { InvalidArgumentError } from '../../../domain/errors/invalid-argument.error';
 import type { UserScoreRepository } from '../../../domain/ports/user-score.repository';
 import { ActionId } from '../../../domain/value-objects/action-id';
 import { ScoreDelta } from '../../../domain/value-objects/score-delta';
@@ -27,6 +24,7 @@ import { UserId } from '../../../domain/value-objects/user-id';
 import { ActionTokenGuard } from '../../../infrastructure/auth/action-token.guard';
 import { JwtGuard } from '../../../infrastructure/auth/jwt.guard';
 import { RateLimitGuard } from '../../../infrastructure/rate-limit/rate-limit.guard';
+import { METRIC_SCORE_INCREMENT_TOTAL } from '../../../../shared/metrics';
 import { IncrementScoreSchema } from '../dto/increment-score.dto';
 
 @Controller('v1')
@@ -35,6 +33,8 @@ export class ScoreboardController {
     private readonly handler: IncrementScoreHandler,
     @Inject(USER_SCORE_REPOSITORY)
     private readonly repository: UserScoreRepository,
+    @Inject(METRIC_SCORE_INCREMENT_TOTAL)
+    private readonly scoreIncrementTotal: Counter<string>,
   ) {}
 
   // Guard order MUST be exactly [JwtGuard, ActionTokenGuard, RateLimitGuard] — spec and design.md §Decision 1
@@ -45,15 +45,8 @@ export class ScoreboardController {
     @Req() req: Record<string, unknown>,
     @Body() rawBody: unknown,
   ): Promise<IncrementScoreResult> {
-    let body: ReturnType<typeof IncrementScoreSchema.parse>;
-    try {
-      body = IncrementScoreSchema.parse(rawBody);
-    } catch (err) {
-      if (err instanceof ZodError) {
-        throw new BadRequestException(err.format());
-      }
-      throw err;
-    }
+    // ZodError propagates to the global HttpExceptionFilter → 400 INVALID_ARGUMENT
+    const body = IncrementScoreSchema.parse(rawBody);
 
     // JwtGuard sets userId on the request
     const userId = (req as unknown as { userId: string }).userId; // JwtGuard sets this
@@ -76,6 +69,7 @@ export class ScoreboardController {
         );
 
         if (prior) {
+          this.scoreIncrementTotal.inc({ result: 'idempotent' });
           return {
             userId: prior.userId,
             newScore: prior.totalScoreAfter,
@@ -97,31 +91,8 @@ export class ScoreboardController {
         });
       }
 
-      if (err instanceof InvalidArgumentError) {
-        // Local error mapping — step-04 global filter will replace this
-        throw new BadRequestException({
-          error: {
-            code: err.code,
-            message: err.message,
-            requestId: null,
-            hint: null,
-          },
-        });
-      }
-
-      if (err instanceof HttpException) {
-        throw err;
-      }
-
-      // Default: map unknown errors to 500 without leaking internals
-      throw new InternalServerErrorException({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: 'An unexpected error occurred',
-          requestId: null,
-          hint: null,
-        },
-      });
+      // All other errors propagate to the global HttpExceptionFilter.
+      throw err;
     }
   }
 }

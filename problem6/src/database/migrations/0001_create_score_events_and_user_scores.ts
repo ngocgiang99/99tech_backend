@@ -8,9 +8,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     )
     .addColumn('user_id', 'uuid', (col) => col.notNull())
     .addColumn('action_id', 'uuid', (col) => col.notNull())
-    .addColumn('delta', 'integer', (col) =>
-      col.notNull().check(sql`delta > 0`),
-    )
+    .addColumn('delta', 'integer', (col) => col.notNull().check(sql`delta > 0`))
     .addColumn('created_at', 'timestamptz', (col) =>
       col.notNull().defaultTo(sql`now()`),
     )
@@ -27,7 +25,10 @@ export async function up(db: Kysely<any>): Promise<void> {
     .createTable('user_scores')
     .addColumn('user_id', 'uuid', (col) => col.primaryKey())
     .addColumn('total_score', 'bigint', (col) =>
-      col.notNull().defaultTo(0).check(sql`total_score >= 0`),
+      col
+        .notNull()
+        .defaultTo(0)
+        .check(sql`total_score >= 0`),
     )
     .addColumn('last_action_id', 'uuid')
     .addColumn('updated_at', 'timestamptz', (col) =>

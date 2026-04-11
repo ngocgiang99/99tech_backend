@@ -4,11 +4,20 @@
 
 const mockJwtVerify = jest.fn();
 
+class MockJWSSignatureVerificationFailed extends Error {
+  constructor() {
+    super('JWSSignatureVerificationFailed');
+    this.name = 'JWSSignatureVerificationFailed';
+  }
+}
+
 jest.mock('jose', () => ({
   SignJWT: jest.fn(),
   jwtVerify: mockJwtVerify,
   createRemoteJWKSet: jest.fn(),
-  errors: {},
+  errors: {
+    JWSSignatureVerificationFailed: MockJWSSignatureVerificationFailed,
+  },
 }));
 
 import { InvalidActionTokenError } from '../../../src/scoreboard/infrastructure/auth/errors';
@@ -19,11 +28,13 @@ import { HmacActionTokenVerifier } from '../../../src/scoreboard/infrastructure/
 // ---------------------------------------------------------------------------
 
 const SECRET = 'a-32-byte-secret-for-testing-purposes!!';
+const PREV_SECRET = 'a-32-byte-prev-secret-for-testing!!!!!!';
 
-function makeConfig() {
+function makeConfig(withPrev = false) {
   return {
     get: jest.fn((key: string) => {
       if (key === 'ACTION_TOKEN_SECRET') return SECRET;
+      if (key === 'ACTION_TOKEN_SECRET_PREV') return withPrev ? PREV_SECRET : undefined;
       return undefined;
     }),
   };
@@ -179,17 +190,58 @@ describe('HmacActionTokenVerifier', () => {
     });
   });
 
-  describe('bad signature', () => {
-    it('throws InvalidActionTokenError when jwtVerify rejects (bad sig)', async () => {
-      mockJwtVerify.mockRejectedValue(new Error('JWSSignatureVerificationFailed'));
+  describe('bad signature — no prev key', () => {
+    it('throws InvalidActionTokenError when primary sig fails and no prev key is set', async () => {
+      mockJwtVerify.mockRejectedValue(new MockJWSSignatureVerificationFailed());
 
-      const config = makeConfig();
+      const config = makeConfig(false);
       const verifier = new HmacActionTokenVerifier(config as never);
 
       const err = await catchError(() =>
         verifier.verify('tampered-token', 'user-1', { actionId: 'action-uuid-1', delta: 1 }),
       );
       expect(err).toBeInstanceOf(InvalidActionTokenError);
+    });
+  });
+
+  describe('dual-secret fallback', () => {
+    it('succeeds when token is signed by prev key and both secrets are set', async () => {
+      // First call (primary) rejects with signature failure; second call (prev) succeeds
+      mockJwtVerify
+        .mockRejectedValueOnce(new MockJWSSignatureVerificationFailed())
+        .mockResolvedValueOnce({ payload: makePayload() });
+
+      const config = makeConfig(true);
+      const verifier = new HmacActionTokenVerifier(config as never);
+
+      const claims = await verifier.verify('prev-signed-token', 'user-1', {
+        actionId: 'action-uuid-1',
+        delta: 50,
+      });
+
+      expect(claims.sub).toBe('user-1');
+      expect(claims.aid).toBe('action-uuid-1');
+      expect(mockJwtVerify).toHaveBeenCalledTimes(2);
+    });
+
+    it('throws InvalidActionTokenError when both primary and prev keys reject', async () => {
+      // Both calls reject — token signed by a third unknown key
+      mockJwtVerify
+        .mockRejectedValueOnce(new MockJWSSignatureVerificationFailed())
+        .mockRejectedValueOnce(new MockJWSSignatureVerificationFailed());
+
+      const config = makeConfig(true);
+      const verifier = new HmacActionTokenVerifier(config as never);
+
+      const err = await catchError(() =>
+        verifier.verify('unknown-signed-token', 'user-1', {
+          actionId: 'action-uuid-1',
+          delta: 1,
+        }),
+      );
+
+      expect(err).toBeInstanceOf(InvalidActionTokenError);
+      expect(mockJwtVerify).toHaveBeenCalledTimes(2);
     });
   });
 });

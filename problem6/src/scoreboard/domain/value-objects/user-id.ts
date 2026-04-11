@@ -8,7 +8,9 @@ export class UserId {
 
   static of(raw: string): UserId {
     if (typeof raw !== 'string' || !UUID_REGEX.test(raw)) {
-      throw new InvalidArgumentError(`UserId must be a valid UUID: received ${String(raw)}`);
+      throw new InvalidArgumentError(
+        `UserId must be a valid UUID: received ${String(raw)}`,
+      );
     }
     return new UserId(raw);
   }

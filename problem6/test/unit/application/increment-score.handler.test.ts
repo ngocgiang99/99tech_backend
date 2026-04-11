@@ -1,3 +1,12 @@
+// ---------------------------------------------------------------------------
+// Mock shared/metrics before any imports that transitively load it
+// ---------------------------------------------------------------------------
+
+jest.mock('../../../src/shared/metrics', () => ({
+  METRIC_SCORE_INCREMENT_TOTAL: 'metric.scoreboard_score_increment_total',
+  scoreIncrementTotal: { inc: jest.fn() },
+}));
+
 import { IncrementScoreCommand } from '../../../src/scoreboard/application/commands/increment-score.command';
 import { IncrementScoreHandler } from '../../../src/scoreboard/application/commands/increment-score.handler';
 import { IdempotencyViolationError } from '../../../src/scoreboard/domain/errors/idempotency-violation.error';
@@ -12,6 +21,10 @@ import { FakeUserScoreRepository } from './fakes/fake-user-score.repository';
 const USER = UserId.of('550e8400-e29b-41d4-a716-446655440000');
 const ACTION_A = ActionId.of('11111111-1111-1111-1111-111111111111');
 const ACTION_B = ActionId.of('22222222-2222-2222-2222-222222222222');
+
+function makeCounter() {
+  return { inc: jest.fn() };
+}
 
 describe('IncrementScoreHandler.execute', () => {
   it('happy path with existing user returns the new total and null rank/topChanged', async () => {
@@ -32,7 +45,7 @@ describe('IncrementScoreHandler.execute', () => {
     const seedEvent = seeded.pullEvents()[0];
     await repo.credit(seeded, seedEvent);
 
-    const handler = new IncrementScoreHandler(repo);
+    const handler = new IncrementScoreHandler(repo, makeCounter() as never);
     const now = new Date('2025-06-01T12:00:00Z');
     const result = await handler.execute(
       new IncrementScoreCommand({
@@ -53,7 +66,7 @@ describe('IncrementScoreHandler.execute', () => {
 
   it('new user (no existing row) starts from UserScore.empty', async () => {
     const repo = new FakeUserScoreRepository();
-    const handler = new IncrementScoreHandler(repo);
+    const handler = new IncrementScoreHandler(repo, makeCounter() as never);
     const now = new Date('2025-06-01T12:00:00Z');
 
     const result = await handler.execute(
@@ -81,7 +94,7 @@ describe('IncrementScoreHandler.execute', () => {
 
   it('idempotent replay of the same actionId raises IdempotencyViolationError', async () => {
     const repo = new FakeUserScoreRepository();
-    const handler = new IncrementScoreHandler(repo);
+    const handler = new IncrementScoreHandler(repo, makeCounter() as never);
     const now = new Date('2025-06-01T12:00:00Z');
 
     const cmd = new IncrementScoreCommand({
@@ -102,7 +115,7 @@ describe('IncrementScoreHandler.execute', () => {
   it('domain invariant violation aborts before persistence', async () => {
     const repo = new FakeUserScoreRepository();
     const creditSpy = jest.spyOn(repo, 'credit');
-    const handler = new IncrementScoreHandler(repo);
+    const handler = new IncrementScoreHandler(repo, makeCounter() as never);
 
     // Pre-seed an aggregate at MAX_SAFE_INTEGER so the next credit overflows
     const seeded = UserScore.rehydrate({
@@ -132,7 +145,7 @@ describe('IncrementScoreHandler.execute', () => {
 
   it('response shape always includes rank: null and topChanged: null', async () => {
     const repo = new FakeUserScoreRepository();
-    const handler = new IncrementScoreHandler(repo);
+    const handler = new IncrementScoreHandler(repo, makeCounter() as never);
 
     const result = await handler.execute(
       new IncrementScoreCommand({
@@ -145,5 +158,22 @@ describe('IncrementScoreHandler.execute', () => {
 
     expect(result).toHaveProperty('rank', null);
     expect(result).toHaveProperty('topChanged', null);
+  });
+
+  it('increments the scoreIncrementTotal counter with result=committed on success', async () => {
+    const repo = new FakeUserScoreRepository();
+    const counter = makeCounter();
+    const handler = new IncrementScoreHandler(repo, counter as never);
+
+    await handler.execute(
+      new IncrementScoreCommand({
+        userId: USER,
+        actionId: ACTION_A,
+        delta: ScoreDelta.of(5),
+        occurredAt: new Date(),
+      }),
+    );
+
+    expect(counter.inc).toHaveBeenCalledWith({ result: 'committed' });
   });
 });

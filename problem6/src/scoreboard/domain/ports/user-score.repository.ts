@@ -20,5 +20,7 @@ export interface ScoreEventRecord {
 export interface UserScoreRepository {
   findByUserId(userId: UserId): Promise<UserScore | null>;
   credit(aggregate: UserScore, event: ScoreCredited): Promise<void>;
-  findScoreEventByActionId(actionId: ActionId): Promise<ScoreEventRecord | null>;
+  findScoreEventByActionId(
+    actionId: ActionId,
+  ): Promise<ScoreEventRecord | null>;
 }

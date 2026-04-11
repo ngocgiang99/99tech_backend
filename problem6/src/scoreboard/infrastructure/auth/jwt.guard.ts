@@ -1,6 +1,14 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { trace, SpanStatusCode } from '@opentelemetry/api';
 
 import { JwksCache } from './jwks-cache';
+
+const tracer = trace.getTracer('scoreboard');
 
 @Injectable()
 export class JwtGuard implements CanActivate {
@@ -9,14 +17,17 @@ export class JwtGuard implements CanActivate {
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     try {
       const request = ctx.switchToHttp().getRequest<Record<string, unknown>>();
-      const authHeader = request['headers'] as Record<string, string> | undefined;
-      const authorization = authHeader?.['authorization'] ?? authHeader?.['Authorization'];
+      const authHeader = request['headers'] as
+        | Record<string, string>
+        | undefined;
+      const authorization =
+        authHeader?.['authorization'] ?? authHeader?.['Authorization'];
 
       if (!authorization) {
         throw new UnauthorizedException('Unauthorized');
       }
 
-      const parts = (authorization as string).split(' ');
+      const parts = authorization.split(' ');
       if (parts.length !== 2 || parts[0] !== 'Bearer') {
         throw new UnauthorizedException('Unauthorized');
       }
@@ -41,9 +52,22 @@ export class JwtGuard implements CanActivate {
         }
       }
 
-      const payload = await this.jwks.verify(token);
+      const payload = await tracer.startActiveSpan(
+        'jwt.verify',
+        async (span) => {
+          try {
+            return await this.jwks.verify(token);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            span.setStatus({ code: SpanStatusCode.ERROR, message: msg });
+            throw e;
+          } finally {
+            span.end();
+          }
+        },
+      );
 
-      (request as Record<string, unknown>)['userId'] = payload.sub;
+      request['userId'] = payload.sub;
       return true;
     } catch (err) {
       if (err instanceof UnauthorizedException) throw err;

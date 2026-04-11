@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   HttpCode,
@@ -9,7 +8,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Redis } from 'ioredis';
-import { ZodError } from 'zod';
 
 import { ConfigService } from '../../../../config';
 import { HmacActionTokenIssuer } from '../../../infrastructure/auth/hmac-action-token.issuer';
@@ -43,15 +41,8 @@ export class ActionsController {
     expiresAt: string;
     maxDelta: number;
   }> {
-    let dto: ReturnType<typeof IssueActionTokenSchema.parse>;
-    try {
-      dto = IssueActionTokenSchema.parse(body);
-    } catch (err) {
-      if (err instanceof ZodError) {
-        throw new BadRequestException(err.format());
-      }
-      throw err;
-    }
+    // ZodError propagates to the global HttpExceptionFilter → 400 INVALID_ARGUMENT
+    const dto = IssueActionTokenSchema.parse(body);
 
     // JwtGuard sets userId on the request; cast is safe — JwtGuard runs first via @UseGuards
     const userId = (req as unknown as { userId: string }).userId;
@@ -64,7 +55,7 @@ export class ActionsController {
       mxd,
     });
 
-    const ttl = this.config.get('ACTION_TOKEN_TTL_SECONDS') as number;
+    const ttl = this.config.get('ACTION_TOKEN_TTL_SECONDS');
     await this.redis.set(
       'action:issued:' + result.actionId,
       '1',
