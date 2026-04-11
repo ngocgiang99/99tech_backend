@@ -21,7 +21,7 @@ The project SHALL include an `ARCHITECTURE.md` at the project root containing th
 #### Scenario: Container diagram is present and renders
 
 - **WHEN** `ARCHITECTURE.md` is read
-- **THEN** a container diagram shows the internal module decomposition: HTTP layer (router, controller, mapper, middleware), application layer (service, cursor, request-context), module infrastructure (repository, cached-repository, cache-keys), driver infrastructure (Kysely + pg.Pool, ioredis, singleflight), and cross-cutting primitives (health registry, shutdown manager, error taxonomy, logger)
+- **THEN** a container diagram shows the internal module decomposition: HTTP layer (router, controller, mapper, middleware), application layer (service, request-context), module infrastructure (repository, cached-repository, cache-keys, cursor codec), driver infrastructure (Kysely + pg.Pool, ioredis, singleflight), and cross-cutting primitives (health registry, shutdown manager, error taxonomy, logger)
 - **AND** each box references the primary file path in the codebase
 - **AND** arrows show the dependency direction (`presentation → application → infrastructure`)
 

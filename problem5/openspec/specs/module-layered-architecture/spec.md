@@ -96,12 +96,13 @@ Every feature module under `src/modules/` SHALL organize its files into three in
 #### Scenario: Application layer contains service and use-case helpers
 
 - **WHEN** a reader opens `src/modules/resources/application/`
-- **THEN** it contains `service.ts`, `cursor.ts`, and `request-context.ts`
+- **THEN** it contains `service.ts` and `request-context.ts`
 
-#### Scenario: Infrastructure layer contains repositories and cache keys
+#### Scenario: Infrastructure layer contains repositories, cache keys, and cursor codec
 
 - **WHEN** a reader opens `src/modules/resources/infrastructure/`
-- **THEN** it contains `repository.ts`, `cached-repository.ts`, and `cache-keys.ts`
+- **THEN** it contains `repository.ts`, `cached-repository.ts`, `cache-keys.ts`, and `cursor.ts`
+- **AND** `cursor.ts` lives here (not in `application/`) because only the raw repository uses it — the service, cached decorator, and controller all speak the opaque base64url string form and never touch the decoded `CursorPayload`
 
 ### Requirement: Module Schema File Stays at Module Root
 
@@ -214,7 +215,7 @@ All unit and integration tests SHALL continue to pass after the refactor without
 - **THEN** the corresponding test file is found at a mirrored path under `tests/`
   - `src/infrastructure/cache/singleflight.ts` → `tests/unit/infrastructure/cache/singleflight.test.ts`
   - `src/shared/errors.ts` → `tests/unit/shared/errors.test.ts`
-  - `src/modules/resources/application/cursor.ts` → `tests/unit/modules/resources/application/cursor.test.ts`
+  - `src/modules/resources/infrastructure/cursor.ts` → `tests/unit/modules/resources/infrastructure/cursor.test.ts`
   - `src/modules/resources/infrastructure/cache-keys.ts` → `tests/unit/modules/resources/infrastructure/cache-keys.test.ts`
 
 ### Requirement: ARCHITECTURE.md Documents the Layering

@@ -58,7 +58,6 @@ graph TD
 
     subgraph app["Application Layer (src/modules/resources/application)"]
         Service["ResourceService<br/>service.ts"]
-        Cursor["Cursor codec<br/>cursor.ts"]
         ReqCtx["RequestContext<br/>request-context.ts"]
     end
 
@@ -67,6 +66,7 @@ graph TD
         PgRepo["PostgresResourceRepository<br/>repository.ts"]
         CachedRepo["CachedResourceRepository<br/>cached-repository.ts"]
         Keys["cache-keys.ts<br/>(detailKey · listKey · version)"]
+        Cursor["Cursor codec<br/>cursor.ts"]
     end
 
     subgraph drivers["Driver Infrastructure (src/infrastructure)"]
@@ -103,7 +103,7 @@ graph TD
     CachedRepo --> Singleflight
     CachedRepo --> Keys
     PgRepo --> Kysely
-    Service --> Cursor
+    PgRepo --> Cursor
     Service --> ReqCtx
     Health --> Kysely
     Health --> IORedis
@@ -346,14 +346,14 @@ src/
 │       │   ├── router.ts
 │       │   ├── controller.ts
 │       │   └── mapper.ts                # toDto: DB row → response DTO
-│       ├── application/                 # Business orchestration, cursor, request context
+│       ├── application/                 # Business orchestration + request context
 │       │   ├── service.ts
-│       │   ├── cursor.ts
 │       │   └── request-context.ts
-│       ├── infrastructure/              # Feature-local data access + caching
+│       ├── infrastructure/              # Feature-local data access + caching + cursor codec
 │       │   ├── repository.ts
 │       │   ├── cached-repository.ts
-│       │   └── cache-keys.ts
+│       │   ├── cache-keys.ts
+│       │   └── cursor.ts
 │       ├── schema.ts                    # Zod schemas + inferred DTO types
 │       └── index.ts                     # createResourcesModule(deps) → { router }
 ├── app.ts                               # createApp(deps) — DI entry point
@@ -441,7 +441,7 @@ Current rules, in plain English:
 
 1. **Presentation cannot import from infrastructure directly.** Files under `src/modules/*/presentation/` may not import from `**/infrastructure/**`. Type-only imports (`import type`) are allowed so `presentation/mapper.ts` can reference `import type { Resource } from '../../../infrastructure/db/schema.js'`.
 
-2. **Infrastructure cannot import from application or presentation.** Files under `src/modules/*/infrastructure/` may not import from `**/application/**` or `**/presentation/**`. Type-only imports are allowed so `cached-repository.ts` can reference `import type { RequestContext }` and `repository.ts` can reference `import type { CursorPayload }`.
+2. **Infrastructure cannot import from application or presentation.** Files under `src/modules/*/infrastructure/` may not import from `**/application/**` or `**/presentation/**`. Type-only imports are allowed so `cached-repository.ts` and `repository.ts` can reference `import type { RequestContext }` from `application/request-context.js`.
 
 3. **Application cannot import from presentation.** Files under `src/modules/*/application/` may not import from `**/presentation/**` at all.
 
