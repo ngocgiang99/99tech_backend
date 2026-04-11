@@ -69,6 +69,23 @@
 # even safer. The dev `api` is idle during a prod benchmark anyway.
 # NOTE: the env var is `DB_POOL_MAX` (see src/config/env.ts), not
 # `DATABASE_POOL_SIZE` (the abstract name used in the design doc).
+#
+# -----------------------------------------------------------------------------
+# Rate-limit middleware (s12): host k6 path only
+# -----------------------------------------------------------------------------
+# The prod stack has NO in-compose k6 service — the canonical prod benchmark
+# runs k6 from the host against http://localhost:${NGINX_PORT:-8080}. The
+# nginx reverse proxy forwards X-Forwarded-For to the api replicas, and the
+# `trust proxy = 'loopback, linklocal, uniquelocal'` setting in buildApp
+# trusts the unique-local bridge hop from nginx. Real host-k6 requests have
+# req.ip === 127.0.0.1 (loopback bypass ALWAYS on), so the limiter skips them
+# unconditionally. No RATE_LIMIT_ALLOWLIST_CIDRS override is needed here.
+#
+# If you ever add an in-compose k6 to this file, its req.ip will be the k6
+# container's bridge address, NOT loopback. In that case, allow-list the
+# bridge subnet via `.env` before `mise run up:prod`:
+#   echo 'RATE_LIMIT_ALLOWLIST_CIDRS=192.168.0.0/16,172.16.0.0/12' >> .env
+# See openspec/specs/rate-limiting/spec.md for the full contract.
 # =============================================================================
 
 # -----------------------------------------------------------------------------

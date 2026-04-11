@@ -8,7 +8,7 @@ import { createDbMetricsLogger } from './observability/db-metrics.js';
 import { startDbPoolGauge } from './observability/db-pool-gauge.js';
 import { createApp } from './app.js';
 
-function main(): void {
+async function main(): Promise<void> {
   // 1. Load + validate configuration (exits on failure)
   const config = loadConfig();
 
@@ -34,6 +34,28 @@ function main(): void {
   redis.on('error', (err) => {
     logger.warn({ err: err.message }, 'Redis client error');
   });
+
+  // 4b. Wait for the Redis client to finish its TCP handshake before
+  //     constructing the app. The rate-limit-redis store (s12) issues
+  //     commands during its constructor via `loadIncrementScript`, and
+  //     ioredis is configured with `enableOfflineQueue: false` — so any
+  //     command issued before the `ready` event rejects with "Stream
+  //     isn't writeable". Matching the integration fixture's pattern
+  //     here keeps the dev compose healthcheck deterministic.
+  if (redis.status !== 'ready') {
+    await new Promise<void>((resolve, reject) => {
+      const onReady = (): void => {
+        redis.off('error', onError);
+        resolve();
+      };
+      const onError = (err: Error): void => {
+        redis.off('ready', onReady);
+        reject(err);
+      };
+      redis.once('ready', onReady);
+      redis.once('error', onError);
+    });
+  }
 
   // 5. Start the pool-size sampler (5s interval, unref'd so it never holds
   //    the event loop open). No-op when metrics are disabled — we still
@@ -87,9 +109,7 @@ function main(): void {
   shutdownManager.listen();
 }
 
-try {
-  main();
-} catch (err: unknown) {
+main().catch((err: unknown) => {
   process.stderr.write(`[fatal] Unhandled error during startup: ${String(err)}\n`);
   process.exit(1);
-}
+});

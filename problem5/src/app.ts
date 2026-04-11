@@ -64,6 +64,12 @@ export function createApp(deps: Deps): AppBundle {
     },
     metrics && config.METRICS_ENABLED ? { metrics, enabled: true } : undefined,
     { extraScrubHeaders },
+    // Rate limit wiring: register the middleware only when enabled in config.
+    // When disabled, the limiter is not constructed and no Redis round-trip
+    // is spent per request. See src/middleware/rate-limit.ts + design.md.
+    config.RATE_LIMIT_ENABLED
+      ? { enabled: true, redis, config }
+      : { enabled: false, redis, config },
   );
 
   return { app, healthRegistry };

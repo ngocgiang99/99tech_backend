@@ -283,6 +283,12 @@ Every scenario enforces thresholds (`http_req_failed<0.01`,
 `benchmarks/lib/thresholds.js` module. k6 exits non-zero on threshold
 violation, so the same scripts can run in a CI smoke job later.
 
+> **Rate limiter note:** the benchmark suite runs k6 from the host
+> (loopback), which always bypasses the rate-limit middleware
+> irrespective of `RATE_LIMIT_*` settings — see §Rate limiting. The
+> smoke scenario asserts zero 429s so a broken bypass is caught
+> immediately.
+
 ### Running the full cache comparison
 
 ```bash
@@ -432,6 +438,10 @@ All variables are listed in `.env.example` with their defaults.
 | `METRICS_DEFAULT_METRICS`       | No       | `true`                                             | Whether to collect `prom-client`'s default Node.js metrics (CPU, heap, event loop lag, GC). Disable for narrower `/metrics` output. |
 | `GRAFANA_PORT`                  | No       | `3300`                                             | Host port for Grafana (only published when the `metrics` compose profile is active). Defaults to `3300` because the Resources API dev server already binds host `:3000`; override if `3300` conflicts with something else. Grafana's container port is always `3000`. |
 | `LOG_SCRUBBER_EXTRA_HEADERS`    | No       | (empty)                                            | Comma-separated extra header names to redact from error logs in addition to the built-in denylist (`authorization`, `cookie`, `set-cookie`, `x-api-key`, `x-auth-token`, `proxy-authorization`). Case-insensitive. |
+| `RATE_LIMIT_ENABLED`            | No       | `true`                                             | Master switch for the per-IP rate-limit middleware. When `false`, the middleware is not registered at all — zero Redis round-trips per request. |
+| `RATE_LIMIT_WINDOW_MS`          | No       | `60000`                                            | Window length in milliseconds (default 1 minute). |
+| `RATE_LIMIT_MAX`                | No       | `1000`                                             | Max requests per window per IP. |
+| `RATE_LIMIT_ALLOWLIST_CIDRS`    | No       | (empty)                                            | Comma-separated CIDRs that bypass the limiter (loopback is always bypassed). Refuses to boot in production if it contains `0.0.0.0/0` or `::/0`. See §Rate limiting below. |
 
 ### Database Migrations
 
@@ -743,7 +753,7 @@ fails the build if any appear.
 | `NOT_FOUND`                | 404  | Resource id does not exist.                                         | `{"error":{"code":"NOT_FOUND","message":"Resource not found","requestId":"…"}}` |
 | `CONFLICT`                 | 409  | Unique-constraint violation, optimistic-lock failure.               | `{"error":{"code":"CONFLICT","message":"Resource conflict","requestId":"…"}}` |
 | `UNPROCESSABLE_ENTITY`     | 422  | Request is well-formed but semantically rejected by the domain.     | `{"error":{"code":"UNPROCESSABLE_ENTITY","message":"Unprocessable entity","requestId":"…"}}` |
-| `RATE_LIMIT`               | 429  | Reserved — no rate limiter wired in this revision.                  | `{"error":{"code":"RATE_LIMIT","message":"Too many requests","requestId":"…"}}` |
+| `RATE_LIMIT`               | 429  | Per-IP bucket exhausted. Emitted by `src/middleware/rate-limit.ts`; see §Rate limiting below. | `{"error":{"code":"RATE_LIMIT","message":"Too many requests, please try again later.","requestId":"…","details":{"retryAfterSeconds":42}}}` |
 | `DEPENDENCY_UNAVAILABLE`   | 503  | Postgres deadlock, connection-pool exhaustion, query cancelled.     | `{"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"Upstream dependency is temporarily unavailable","requestId":"…"}}` |
 | `INTERNAL_ERROR`           | 500  | Anything unhandled. Always returns the generic message + `errorId`. | `{"error":{"code":"INTERNAL_ERROR","message":"Internal server error","requestId":"…","errorId":"…"}}` |
 
@@ -809,3 +819,95 @@ Postgres errors into `AppError` subclasses at the data-access boundary,
 so the service layer only ever sees typed errors. The middleware's job
 is then reduced to: wrap any remaining unknown error in `InternalError`,
 log, format response.
+
+---
+
+## Rate limiting
+
+The API protects every route under `/resources` with a per-IP rate-limit
+middleware. The middleware is implemented as a thin wrapper around
+`express-rate-limit` + `rate-limit-redis` in `src/middleware/rate-limit.ts`
+and wired into `src/http/app.ts` between `pinoHttp` and `express.json()` so
+429s are logged, counted in HTTP metrics, and never pay the body-parse
+cost. The canonical contract lives in
+`openspec/specs/rate-limiting/spec.md`.
+
+### What is limited
+
+- **Scope**: one global bucket per source IP, shared across every route
+  and method. Mixing `GET /resources`, `POST /resources`, and
+  `GET /resources/:id` all count against the same counter.
+- **Default limit**: `RATE_LIMIT_MAX=1000` requests per
+  `RATE_LIMIT_WINDOW_MS=60000` (1 minute) — about 16 req/sec sustained,
+  which is generous for any human-driven UI and tight enough to bounce a
+  misbehaving client long before it reaches the CPU ceiling.
+- **Shared state across replicas**: the counter lives in Redis (the same
+  ioredis client the response cache uses — no new connection is opened),
+  so the s11 three-replica prod stack enforces a single bucket per IP
+  regardless of which replica nginx routes the request to.
+
+### Configuration (four env vars)
+
+| Var | Default | Notes |
+|---|---|---|
+| `RATE_LIMIT_ENABLED` | `true` | Master switch. `false` skips the factory entirely; no Redis round-trip per request. |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Window length in milliseconds. |
+| `RATE_LIMIT_MAX` | `1000` | Max requests per window per IP. |
+| `RATE_LIMIT_ALLOWLIST_CIDRS` | (empty) | Comma-separated CIDRs that bypass the limiter (in addition to the always-on loopback bypass). |
+
+### Bypass policy
+
+1. **Loopback is always bypassed.** Requests whose `req.ip` (after
+   `trust proxy` resolution) is `127.0.0.1`, `::1`, or the IPv4-mapped form
+   `::ffff:127.0.0.1` skip the bucket entirely. This is the code path the
+   benchmark suite's host k6 runs take against both `docker-compose.yml`
+   and `docker-compose.prod.yml`. It is **not** configurable and **not**
+   disable-able — after `trust proxy` is set to
+   `'loopback, linklocal, uniquelocal'`, a remote attacker cannot forge a
+   loopback source IP.
+2. **CIDR allow-list.** Any IP that matches a CIDR in the parsed
+   `RATE_LIMIT_ALLOWLIST_CIDRS` env var also skips the bucket. This is
+   the escape hatch for in-compose k6 runs against the Docker bridge
+   subnet (where the k6 container's `req.ip` is a unique-local
+   `172.16.x.x` / `192.168.x.x` address, not loopback).
+3. **Excluded paths.** `/healthz` (and any sub-path) and `/metrics` are
+   skipped *before* the counter is touched — Docker healthchecks and
+   Prometheus scrapes never consume the bucket.
+
+### Production safety assertion
+
+`src/config/env.ts` parses `RATE_LIMIT_ALLOWLIST_CIDRS` at startup and
+**refuses to boot** when `NODE_ENV=production` and the parsed list
+contains `0.0.0.0/0`, `::/0`, or any CIDR that covers them (e.g.
+`0.0.0.0/1`). The error message names the offending CIDR and points at
+the rate-limit design doc. In `development`, a wide-open CIDR logs a
+`WARN` line but does not exit — local workflows that need to open the
+bypass for testing can still do so.
+
+Invalid CIDR syntax (e.g. `not-a-cidr`) fails startup in **every**
+environment so a typo never silently turns the bypass off.
+
+### When the limiter fires
+
+- Status: `429`.
+- Body: the canonical error envelope — `{ "error": { "code":
+  "RATE_LIMIT", "message": "Too many requests, please try again later.",
+  "requestId": "...", "details": { "retryAfterSeconds": <N> } } }`.
+- Headers: `Retry-After: <seconds>` (always ≥ 1), plus the IETF draft-7
+  `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` headers on
+  both successful and 429 responses.
+- Logs: the central error handler emits one structured `warn`-level log
+  line with the configured request id, route, method, source IP, and
+  rate-limit code. The middleware itself does not log.
+- Metrics: the existing `http_requests_total{status="429"}` Prometheus
+  counter increments automatically. No separate rate-limit counter is
+  exported.
+
+### Disabling for local development
+
+Set `RATE_LIMIT_ENABLED=false` in `.env`. The middleware factory is not
+called and no Redis round-trip is spent per request. Integration tests
+use this path for scenarios that need unlimited requests; the
+`tests/integration/rate-limit.test.ts` file exercises both
+`RATE_LIMIT_ENABLED=true` (limiter fires) and `RATE_LIMIT_ENABLED=false`
+(disabled) paths.

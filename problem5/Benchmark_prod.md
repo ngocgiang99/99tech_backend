@@ -38,6 +38,16 @@ Same machine as `Benchmark.md` — full hardware table there. Summary:
 
 ## Methodology
 
+> **Rate-limit middleware note (s12):** Same default configuration applies
+> as in `Benchmark.md` (`RATE_LIMIT_ENABLED=true`, `RATE_LIMIT_MAX=1000`,
+> `RATE_LIMIT_WINDOW_MS=60000`). Host k6 runs transit nginx, which forwards
+> `X-Forwarded-For`; the API's `trust proxy = 'loopback, linklocal, uniquelocal'`
+> resolves the real client IP back to `127.0.0.1`, and the loopback bypass
+> absorbs the burst. On Docker Desktop for macOS, the dev api container
+> also allow-lists the bridge subnet via `.env` for its own host-k6 path
+> — see Benchmark.md Methodology. No prod-specific override is required
+> because nginx owns the trust-proxy hop. Smoke reports 0 429s under s12.
+
 ### Topology
 
 Instead of the single-replica dev stack (one `api` container on host port

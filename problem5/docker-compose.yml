@@ -70,6 +70,28 @@ services:
   # Benchmark runner — only active with: docker compose --profile bench up
   # Runs the smoke scenario by default. For other scenarios, override the
   # command: docker compose --profile bench run k6 run benchmarks/scenarios/read-load.js
+  #
+  # NOTE on the rate-limit middleware (s12):
+  #   The canonical benchmark path is host k6 → dev api (loopback, always
+  #   bypassed). When running the bench profile in-compose, this `k6` service
+  #   hits the api over the Docker bridge, and its `req.ip` is NOT loopback —
+  #   it is a unique-local bridge address that differs between machines
+  #   (observed: 192.168.165.x on a dev laptop; Docker's documented default
+  #   is 172.16.0.0/12). Because the subnet is not stable across hosts, the
+  #   dev `api` service does NOT ship with `RATE_LIMIT_ALLOWLIST_CIDRS` set
+  #   (task 10.5 of s12 forbids polluting the dev run with it).
+  #
+  #   To run k6 in-compose without tripping the limiter, EITHER:
+  #     (a) disable the limiter inline on the api service for that run:
+  #         docker compose --profile bench run --rm -e RATE_LIMIT_ENABLED=false api ... (no — you run k6 not api)
+  #         docker compose up -d api              # start api first
+  #         docker compose exec api sh -c 'kill 1' # not a sustainable override
+  #         → easier: set RATE_LIMIT_ENABLED=false in .env before `mise run up`
+  #     (b) explicitly allow-list the bridge subnet in .env:
+  #         echo 'RATE_LIMIT_ALLOWLIST_CIDRS=192.168.0.0/16,172.16.0.0/12' >> .env
+  #         mise run fresh
+  #
+  #   See openspec/specs/rate-limiting/spec.md for the full contract.
   # ---------------------------------------------------------------------------
   k6:
     image: grafana/k6:latest

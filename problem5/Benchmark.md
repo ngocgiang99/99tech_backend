@@ -22,6 +22,23 @@
 
 ## Methodology
 
+> **Rate-limit middleware note (s12):** The Resources API now ships with a
+> per-IP rate-limit middleware enabled by default (`RATE_LIMIT_ENABLED=true`,
+> `RATE_LIMIT_MAX=1000`, `RATE_LIMIT_WINDOW_MS=60000`). The loopback bypass
+> is always active. On Docker Desktop for macOS, host k6 requests do NOT
+> present as loopback inside the api container — Docker Desktop's userland
+> proxy surfaces them as the bridge gateway (`::ffff:192.168.165.1` or
+> similar). To keep host-k6 runs unthrottled on that platform, the dev
+> `.env` allow-lists the common private bridge subnets:
+> `RATE_LIMIT_ALLOWLIST_CIDRS=192.168.0.0/16,172.16.0.0/12,10.0.0.0/8`. On
+> native Linux Docker, that override is unnecessary because host published
+> ports DO present as loopback inside the container. The prod compose
+> (s11) is unaffected: its host k6 goes through nginx, nginx sets
+> `X-Forwarded-For`, and `trust proxy` resolves the real client IP, which
+> is still 127.0.0.1 on the host path. See `openspec/specs/rate-limiting/spec.md`
+> for the full contract and `openspec/changes/archive/2026-04-11-s12-*/tasks.md`
+> §12 for the deviation notes.
+
 ### Stack startup
 
 ```bash
