@@ -1,0 +1,91 @@
+## ADDED Requirements
+
+### Requirement: ESLint enforces hexagonal layer boundaries
+
+The ESLint configuration SHALL include `eslint-plugin-boundaries` with element types matching `README.md §11.2`: `domain`, `application`, `infrastructure`, `interface`, `shared`. The plugin's `boundaries/element-types` rule SHALL fire `error` (not warn) on any import that violates the dependency graph: domain depends on nothing, application depends only on domain, infrastructure depends on application + domain, interface depends on application, shared is universal.
+
+#### Scenario: Domain importing from @nestjs fails lint
+- **GIVEN** a file at `src/scoreboard/domain/foo.ts` with `import { Injectable } from '@nestjs/common';`
+- **WHEN** `mise run lint` is run
+- **THEN** the lint exits non-zero
+- **AND** the error message names the offending file and the violated boundary rule
+
+#### Scenario: Application importing from infrastructure fails lint
+- **GIVEN** a file at `src/scoreboard/application/commands/foo.ts` with `import { KyselyUserScoreRepository } from '../../infrastructure/persistence/kysely/...';`
+- **WHEN** `mise run lint` is run
+- **THEN** the lint exits non-zero with a boundary violation
+- **AND** the dev is told to depend on the port (`UserScoreRepository` from `domain/ports/`) instead
+
+#### Scenario: Infrastructure importing from interface fails lint
+- **GIVEN** an infrastructure file importing from `src/scoreboard/interface/`
+- **WHEN** lint runs
+- **THEN** the boundary check fires (interface should depend on infrastructure, not the reverse)
+
+#### Scenario: Current Epic 1 codebase passes lint
+- **WHEN** `mise run lint` is run on the in-tree code at this change's completion
+- **THEN** zero warnings, zero errors
+- **AND** the CI pipeline fails any future PR that introduces a violation
+
+### Requirement: Jest coverage threshold enforced at ≥80% global, 100% for domain
+
+`mise run test:coverage` SHALL run Jest with `--coverageThreshold='{global:{lines:80,branches:80,functions:80,statements:80}}'`. Additionally, the domain layer SHALL have a per-directory threshold of 100% (lines, branches, functions, statements). The build SHALL fail if either threshold is unmet.
+
+#### Scenario: Coverage above threshold passes
+- **GIVEN** unit tests covering ≥80% of `src/` (domain at 100%)
+- **WHEN** `mise run test:coverage` is run
+- **THEN** Jest reports coverage and exits 0
+
+#### Scenario: Coverage drops below threshold fails the build
+- **GIVEN** a deliberate change that drops coverage to 75%
+- **WHEN** `mise run test:coverage` is run in CI
+- **THEN** Jest exits non-zero
+- **AND** the failure message names the offending threshold (e.g. "lines: 75% < 80%")
+
+#### Scenario: Domain coverage below 100% fails the build
+- **GIVEN** a domain change with one uncovered branch
+- **WHEN** `mise run test:coverage` is run
+- **THEN** the per-directory threshold for `src/scoreboard/domain/**/*.ts` fails
+- **AND** the failure message names the directory and the missing percentage
+
+### Requirement: Testcontainers integration suite for persistence and rate-limit adapters
+
+The system SHALL provide an integration test suite under `test/integration/` that uses `@testcontainers/postgresql` and `@testcontainers/redis` to verify infrastructure adapters against real services. The suite is run via `mise run test:integration`. Test isolation is per-suite (each test file gets a fresh container).
+
+#### Scenario: KyselyUserScoreRepository round-trip works against real Postgres
+- **GIVEN** a Testcontainers Postgres started by the suite
+- **WHEN** the repository's `credit()` method is called
+- **THEN** the row is persisted in `score_events`
+- **AND** `findByUserId()` returns the rehydrated aggregate
+
+#### Scenario: Duplicate action_id surfaces as IdempotencyViolationError against real Postgres
+- **GIVEN** the repository against a real Postgres
+- **WHEN** `credit()` is called twice with the same `actionId`
+- **THEN** the second call throws `IdempotencyViolationError`
+- **AND** the unique constraint name in the error matches `score_events_action`
+
+#### Scenario: Redis idempotency store SETNX behaves correctly
+- **GIVEN** a Testcontainers Redis
+- **WHEN** the store's `setIfNotExists(key, value, ttl)` is called twice with the same key
+- **THEN** the first returns true, the second returns false
+- **AND** after `ttl` elapses, a third call returns true again
+
+#### Scenario: RedisTokenBucket admits and rejects per the algorithm
+- **GIVEN** a Testcontainers Redis with the Lua script loaded
+- **WHEN** `bucket.consume(userId)` is called 25 times in rapid succession with capacity 20
+- **THEN** the first 20 calls return `{allowed: true}`
+- **AND** calls 21–25 return `{allowed: false, retryAfterMs: <positive>}`
+
+### Requirement: Operational runbooks live under docs/runbooks/
+
+Operational runbooks (operator-facing prose for incident response and routine procedures) SHALL live under `problem6/docs/runbooks/` as Markdown files. Each runbook SHALL have a numbered procedure, prerequisites, and a "verification" step.
+
+#### Scenario: action-token-rotation.md exists with the documented procedure
+- **WHEN** `problem6/docs/runbooks/action-token-rotation.md` is opened
+- **THEN** the file documents a 4-step procedure: (1) deploy with both `ACTION_TOKEN_SECRET` and `ACTION_TOKEN_SECRET_PREV` set, (2) deploy with primary rotated to a new secret while keeping old as prev, (3) wait for the rollover window to close, (4) deploy with prev removed
+- **AND** the runbook has a "Verification" section explaining how to test the dual-secret behavior with curl
+- **AND** the rollover window length comes from the DECISION-1 input (recorded by `/opsx:apply`)
+
+#### Scenario: Runbook references GAP-05 explicitly
+- **WHEN** `action-token-rotation.md` is opened
+- **THEN** it contains a reference to `architecture.md` `openGaps` GAP-05
+- **AND** indicates that this runbook resolves the gap

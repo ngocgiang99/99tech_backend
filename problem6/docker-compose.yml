@@ -1,0 +1,159 @@
+# ───────────────────────────────────────────────────────────────────────────
+# problem6 · Scoreboard · Local development infrastructure
+#
+# Common flows (invoke via mise tasks):
+#   mise run infra:up          → postgres + redis + nats
+#   mise run infra:up:full     → infra + API container
+#   mise run infra:up:tools    → infra + adminer + redis-commander
+#   mise run infra:down        → stop all
+#   mise run infra:reset       → stop + delete volumes (WIPES local data)
+# ───────────────────────────────────────────────────────────────────────────
+name: problem6
+
+services:
+  # ── Postgres ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: problem6-postgres
+    environment:
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB:       scoreboard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d scoreboard"]
+      interval: 5s
+      timeout:  3s
+      retries:  10
+    restart: unless-stopped
+
+  # ── Redis ───────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.4-alpine
+    container_name: problem6-redis
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - "512mb"
+      - --maxmemory-policy
+      - "allkeys-lru"
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout:  3s
+      retries:  10
+    restart: unless-stopped
+
+  # ── NATS JetStream (async messaging + event retention) ────────────────
+  # Local development uses a SINGLE-NODE NATS (R=1, file storage, no
+  # clustering). Production should run a 3-node JetStream cluster — see
+  # IMPROVEMENTS.md · I-SCL-01 for the multi-region upgrade path.
+  # Stream `SCOREBOARD` is bootstrapped by the app on boot, or manually via
+  # `mise run nats:init` (MVP retention: 1 month / 1M msgs / 1 GB).
+  nats:
+    image: nats:2.10-alpine
+    container_name: problem6-nats
+    command:
+      - "-js"                 # enable JetStream
+      - "-sd"
+      - "/data/jetstream"     # JetStream store directory
+      - "-m"
+      - "8222"                # monitoring HTTP port
+      - "--name"
+      - "problem6-nats"
+    ports:
+      - "4222:4222"           # client protocol
+      - "8222:8222"           # monitoring (http://localhost:8222)
+    volumes:
+      - natsdata:/data/jetstream
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout:  3s
+      retries:  10
+    restart: unless-stopped
+
+  # ── API (optional — profile `full`) ─────────────────────────────────────
+  # Most devs run `mise run dev` on the host for fast iteration.
+  # Bring up the full stack in containers when reproducing prod-like runs.
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: problem6/scoreboard-api:dev
+    container_name: problem6-api
+    env_file: .env
+    environment:
+      NODE_ENV:     production
+      PORT:         "3000"
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/scoreboard
+      REDIS_URL:    redis://redis:6379/0
+      NATS_URL:     nats://nats:4222
+      LOG_LEVEL:    debug
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout:  3s
+      retries:  5
+    profiles: ["full"]
+    restart: unless-stopped
+
+  # ── Dev tooling (optional — profile `tools`) ────────────────────────────
+  adminer:
+    image: adminer:4.8.1
+    container_name: problem6-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    profiles: ["tools"]
+    restart: unless-stopped
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: problem6-redis-commander
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    profiles: ["tools"]
+    restart: unless-stopped
+
+  nats-box:
+    image: natsio/nats-box:latest
+    container_name: problem6-nats-box
+    entrypoint: ["/bin/sh", "-c", "sleep infinity"]
+    depends_on:
+      - nats
+    profiles: ["tools"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  natsdata:
+
+networks:
+  default:
+    name: problem6_default

@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configMap.name }}
+  labels:
+    app: scoreboard
+data:
+  # Runtime
+  NODE_ENV: {{ .Values.env.NODE_ENV | quote }}
+  PORT: {{ .Values.env.PORT | quote }}
+
+  # Datastores — TODO: replace with actual service endpoints in your cluster
+  DATABASE_URL: {{ .Values.env.DATABASE_URL | quote }}
+  REDIS_URL: {{ .Values.env.REDIS_URL | quote }}
+
+  # NATS JetStream — TODO: replace with actual NATS cluster endpoints
+  NATS_URL: {{ .Values.env.NATS_URL | quote }}
+  NATS_STREAM_NAME: {{ .Values.env.NATS_STREAM_NAME | quote }}
+  NATS_STREAM_MAX_AGE_SECONDS: {{ .Values.env.NATS_STREAM_MAX_AGE_SECONDS | quote }}
+  NATS_STREAM_MAX_MSGS: {{ .Values.env.NATS_STREAM_MAX_MSGS | quote }}
+  NATS_STREAM_MAX_BYTES: {{ .Values.env.NATS_STREAM_MAX_BYTES | quote }}
+  NATS_STREAM_REPLICAS: {{ .Values.env.NATS_STREAM_REPLICAS | quote }}
+  NATS_DEDUP_WINDOW_SECONDS: {{ .Values.env.NATS_DEDUP_WINDOW_SECONDS | quote }}
+
+  # Auth token TTL (non-secret — the secrets themselves are in Secret resource)
+  ACTION_TOKEN_TTL_SECONDS: {{ .Values.env.ACTION_TOKEN_TTL_SECONDS | quote }}
+
+  # Rate limiting & SSE
+  RATE_LIMIT_PER_SEC: {{ .Values.env.RATE_LIMIT_PER_SEC | quote }}
+  MAX_SSE_CONN_PER_INSTANCE: {{ .Values.env.MAX_SSE_CONN_PER_INSTANCE | quote }}
+  LEADERBOARD_REBUILD_TOP_N: {{ .Values.env.LEADERBOARD_REBUILD_TOP_N | quote }}
+
+  # Outbox publisher
+  OUTBOX_POLL_INTERVAL_MS: {{ .Values.env.OUTBOX_POLL_INTERVAL_MS | quote }}
+  OUTBOX_LOCK_TTL_SECONDS: {{ .Values.env.OUTBOX_LOCK_TTL_SECONDS | quote }}
+  OUTBOX_COALESCE_WINDOW_MS: {{ .Values.env.OUTBOX_COALESCE_WINDOW_MS | quote }}
+
+  # SSE backpressure
+  SSE_BACKPRESSURE_MAX_PENDING_MESSAGES: {{ .Values.env.SSE_BACKPRESSURE_MAX_PENDING_MESSAGES | quote }}
+  SSE_SLOW_CLIENT_BUFFER_TIMEOUT_MS: {{ .Values.env.SSE_SLOW_CLIENT_BUFFER_TIMEOUT_MS | quote }}
+  SSE_HEARTBEAT_INTERVAL_MS: {{ .Values.env.SSE_HEARTBEAT_INTERVAL_MS | quote }}
+
+  # Observability
+  LOG_LEVEL: {{ .Values.env.LOG_LEVEL | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.env.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}

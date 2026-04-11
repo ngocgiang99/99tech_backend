@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "deleteOutDir": true,
+    "webpackConfigPath": "webpack.config.js",
+    "assets": [
+      {
+        "include": "scoreboard/infrastructure/rate-limit/lua/*.lua",
+        "outDir": "./dist/src"
+      }
+    ]
+  }
+}
