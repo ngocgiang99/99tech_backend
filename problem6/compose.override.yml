@@ -1,0 +1,45 @@
+# ───────────────────────────────────────────────────────────────────────────
+# problem6 · Compose override — host port remap
+#
+# WHY THIS FILE EXISTS:
+#   The canonical `docker-compose.yml` publishes Postgres/Redis/NATS on the
+#   default ports (5432/6379/4222/8222). On a host that is already running a
+#   sibling project (e.g. `problem5` with its own Postgres on :5432), those
+#   defaults collide. Editing `docker-compose.yml` to change the ports would
+#   violate Story 1.1 AC-6 / Story 1.2 AC-8 (the canonical scaffold files
+#   are SHA-256-pinned and must remain byte-identical).
+#
+# WHAT THIS FILE DOES:
+#   Compose v2 auto-merges any `compose.override.yml` next to `compose.yml`
+#   (or `docker-compose.yml`) when running `docker compose up`. We use it
+#   to override ONLY the host-side port mapping. Container internals (image
+#   tag, env, healthcheck, volumes, command flags) are unchanged.
+#
+# PORT MAP (host → container):
+#   55432 → postgres   5432
+#   56379 → redis      6379
+#   54222 → nats       4222   (client protocol)
+#   58222 → nats       8222   (monitoring HTTP)
+#
+# CONSEQUENCES:
+#   - `.env.example` documents DSNs against the override ports (55432/56379/54222).
+#   - The container-network DNS (postgres:5432, redis:6379, nats:4222) used by
+#     the optional `api` profile is UNCHANGED — that path runs inside the
+#     compose network and never sees the host port.
+#   - To revert to the canonical defaults, delete this file (and update .env).
+# ───────────────────────────────────────────────────────────────────────────
+name: problem6
+
+services:
+  postgres:
+    ports: !override
+      - "55432:5432"
+
+  redis:
+    ports: !override
+      - "56379:6379"
+
+  nats:
+    ports: !override
+      - "54222:4222"
+      - "58222:8222"

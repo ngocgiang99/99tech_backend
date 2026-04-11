@@ -133,8 +133,8 @@ run = "docker compose logs -f"
 [tasks."nats:init"]
 description = "Create or update the SCOREBOARD JetStream stream (idempotent; MVP retention: 1 month / 1M msgs / 1 GB)"
 run = """
-docker compose --profile tools run --rm nats-box \
-  nats --server nats://nats:4222 stream add SCOREBOARD \
+docker compose --profile tools run --rm --entrypoint nats nats-box \
+  --server nats://nats:4222 stream add SCOREBOARD \
     --subjects='scoreboard.>' \
     --storage=file \
     --retention=limits \
@@ -149,11 +149,11 @@ docker compose --profile tools run --rm nats-box \
 
 [tasks."nats:info"]
 description = "Inspect the SCOREBOARD stream"
-run = "docker compose --profile tools run --rm nats-box nats --server nats://nats:4222 stream info SCOREBOARD"
+run = "docker compose --profile tools run --rm --entrypoint nats nats-box --server nats://nats:4222 stream info SCOREBOARD"
 
 [tasks."nats:cli"]
 description = "Open an interactive nats CLI"
-run = "docker compose --profile tools run --rm nats-box sh"
+run = "docker compose --profile tools run --rm --entrypoint sh nats-box"
 
 # ─── Docker image ────────────────────────────────────────────────────────────
 [tasks."docker:build"]
