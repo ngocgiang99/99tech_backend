@@ -53,7 +53,7 @@ graph TD
         Router["Router<br/>src/modules/resources/presentation/router.ts"]
         Controller["Controller<br/>src/modules/resources/presentation/controller.ts"]
         Mapper["Mapper (toDto)<br/>src/modules/resources/presentation/mapper.ts"]
-        Middleware["Middleware<br/>request-id · x-cache · error-handler"]
+        Middleware["Middleware<br/>request-id · rate-limit · x-cache · error-handler"]
     end
 
     subgraph app["Application Layer (src/modules/resources/application)"]
@@ -91,6 +91,7 @@ graph TD
     end
 
     Middleware --> Router
+    Middleware -. rate-limit store .-> IORedis
     Router --> Controller
     Controller --> Service
     Controller --> Mapper
@@ -120,6 +121,8 @@ graph TD
 ```
 
 The decomposition honors the layering rule **presentation → application → infrastructure** — each arrow points "inwards" (towards data), never the other way. The `CachedResourceRepository` is a decorator: it implements the same `ResourceRepository` interface as `PostgresResourceRepository` and delegates to it on miss, so the service is unaware of whether caching is enabled.
+
+**Middleware chain order.** Registered in `src/http/app.ts` in this order: `trust proxy` setting → `requestIdMiddleware` → (optional `http-metrics` middleware) → `pinoHttp` → **rate-limit** → `express.json` → routes → error handler. The rate-limit middleware (`src/middleware/rate-limit.ts`) lives between `pinoHttp` and `express.json` so 429s are logged and counted in HTTP metrics but never pay the body-parse cost. It shares the same ioredis client the response cache uses (no new connection opened) so three-replica prod stacks enforce a single bucket per IP. Loopback is always bypassed; `/healthz` and `/metrics` are excluded from the counter entirely. See `openspec/specs/rate-limiting/spec.md` for the full contract.
 
 ## Request Flows
 
@@ -235,13 +238,28 @@ graph LR
 
 Healthchecks gate startup: `api` does not start until `postgres` and `redis` report healthy, and the `api` healthcheck (`GET /healthz?probe=liveness`) is what `k6` and `prometheus` wait on. The default stack exposes only `api` (port 3000) and `postgres` (port 5432) to the host; Redis stays inside the network. When the `metrics` profile is active, Prometheus's UI is also exposed on host port 9090.
 
+### Optional overlay: multi-replica benchmark topology
+
+For measuring the Node event-loop ceiling under horizontal scale, the repo also ships `docker-compose.prod.yml` — a **minimal overlay** on top of `docker-compose.yml` that adds three API replicas (`api-1`, `api-2`, `api-3`) and one `nginx` reverse proxy. It reuses the dev stack's `postgres`, `redis`, `app-network`, and volumes; launching both files together is the canonical form:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# or equivalently:
+mise run up:prod
+```
+
+nginx listens on host `:${NGINX_PORT:-8080}` and round-robins across the three upstream api replicas with HTTP/1.1 keepalive. The dev `api` service is unaffected and can run alongside the overlay. Per-replica `DB_POOL_MAX` is tuned down to 20 in the overlay so `3 × 20 + 10` stays under Postgres's default `max_connections=100`. Migration races across replicas are serialized by Kysely's `migration_lock` row (`SELECT ... FOR UPDATE`), so every replica's entrypoint can run `kysely migrate:latest` safely. See [`Benchmark_prod.md`](./Benchmark_prod.md) for the delta results and `openspec/specs/horizontal-scaling-benchmark/spec.md` for the capability contract.
+
+The s12 rate-limit middleware's Redis-backed store is what makes this topology honest about throttling: all three replicas share the same per-IP bucket, so the effective limit is `RATE_LIMIT_MAX` regardless of which replica nginx routes the request to.
+
 ## Failure Modes
 
 What happens when a dependency goes away. The service is designed to **degrade**, not fail wholesale, when Redis is unavailable. Postgres is harder to lose because the cache cannot satisfy writes — but reads still survive on warm cache entries until they expire.
 
 | Failed component       | Observable behavior                                                                                                                                       | Service status                                                              | Recovery action                                                                 |
 |------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|---------------------------------------------------------------------------------|
-| **Redis down**         | `GET /resources/:id` and `GET /resources` fall through to Postgres (`X-Cache: MISS` on every request). Writes commit normally; cache invalidation `INCR` / `DEL` fail silently and are logged at `warn` (TTL bounds the staleness window). | **Degraded — fully functional**. `GET /healthz` → `503` with `checks.cache: down`. | Restart Redis. Cache repopulates lazily on the next read. No manual flush needed because the version counter is `INCR`-ed by the next write (or starts at 1 again, which is harmless). |
+| **Redis down — cache path only** | `GET /resources/:id` and `GET /resources` fall through to Postgres (`X-Cache: MISS` on every request). Writes commit normally; cache invalidation `INCR` / `DEL` fail silently and are logged at `warn` (TTL bounds the staleness window). | **Degraded — fully functional for reads + writes**. `GET /healthz` → `503` with `checks.cache: down`. | Restart Redis. Cache repopulates lazily on the next read. No manual flush needed because the version counter is `INCR`-ed by the next write (or starts at 1 again, which is harmless). |
+| **Redis down — rate-limit path** | The s12 rate-limit middleware uses `rate-limit-redis` with `passOnStoreError: false` (the library default), so a Redis outage causes every non-loopback request to fail with `500 INTERNAL_ERROR`. Loopback + allow-listed CIDRs (host k6) are unaffected because they bypass the store entirely. | **Severely degraded — all non-bypassed traffic 500s**. `GET /healthz` still passes the liveness probe. | Restart Redis. The middleware recovers automatically on the next successful store call. **Follow-up candidate:** flip to `passOnStoreError: true` in the factory so a Redis outage becomes fail-open and matches the response cache's fail-open posture. None of the s12 spec scenarios exercised the Redis-outage path — adding it would require a new change proposal that updates `openspec/specs/rate-limiting/spec.md` with the desired behavior. |
 | **Postgres down**      | `GET /resources/:id` returns the cached value if `X-Cache: HIT`; on `MISS` the request fails with `500`. List requests fail unless the exact filter tuple + version is cached. All writes (`POST`/`PATCH`/`DELETE`) fail with `500`. | **Severely degraded — read-only on warm keys**. `GET /healthz` → `503` with `checks.db: down`. | Restart Postgres. Once healthy, writes resume. Stale cache entries naturally expire within `CACHE_DETAIL_TTL_SECONDS` / `CACHE_LIST_TTL_SECONDS`. |
 | **Both Postgres and Redis down** | All reads fail with `500` (no cache, no source of truth). All writes fail. Health endpoint reports both checks down. | **Down**. `GET /healthz` → `503` with both `checks.db: down` and `checks.cache: down`. The container's healthcheck (`GET /healthz?probe=liveness`) still returns `200` because liveness is the fast path that does not query dependencies — so Docker keeps the container running rather than restart-looping. | Restart both backends in any order. Postgres healthcheck unblocks `api` (the `depends_on: service_healthy` gate). |
 | **API process crash**  | Connections refused on port 3000. Docker Compose restart policy is `unless-stopped`, so the container is restarted automatically. In-flight requests are lost; clients retry. | **Down briefly** (single-replica deployment). | Automatic via Docker restart. Graceful shutdown drains in-flight requests within `SHUTDOWN_TIMEOUT_MS` on SIGTERM, so a planned restart loses no traffic. |
@@ -251,7 +269,7 @@ The graceful-degradation behavior on Redis loss is documented in the `response-c
 
 ## Production Topology
 
-A single-host Compose stack is the right shape for development, CI, and the take-home review. For production, the same topology fans out:
+A single-host Compose stack is the right shape for development, CI, and the take-home review. The s11 `docker-compose.prod.yml` overlay (see [§Deployment — Optional overlay](#optional-overlay-multi-replica-benchmark-topology)) is the local realization of the API-tier fan-out — three stateless replicas behind nginx — and the rate-limit middleware from s12 already handles the shared-state side of that fan-out via Redis. For a real production deployment, the same topology fans out further:
 
 ```mermaid
 graph LR
@@ -284,14 +302,14 @@ graph LR
     RedisPrimary -. replication .-> RedisReplica
 ```
 
-The scale-out points map directly to the bottlenecks observed in [`Benchmark.md`](./Benchmark.md):
+The scale-out points map directly to the bottlenecks observed in [`Benchmark.md`](./Benchmark.md) and [`Benchmark_prod.md`](./Benchmark_prod.md):
 
-- **Single API process** → horizontal replicas behind a load balancer. The service is stateless (all state lives in Postgres or Redis), so replicas need no coordination.
-- **Postgres connection pool** → PgBouncer in transaction mode in front of a primary, with each replica's `pg.Pool` capped at 5–10 connections. Read-heavy workloads can fan out to a read replica via a connection-string switch in `DATABASE_URL`.
-- **Redis single node** → Redis Sentinel for HA failover, or Redis Cluster for sharding once a single primary saturates. Cache-aside fits both transparently.
+- **Single API process** → horizontal replicas behind a load balancer. The service is stateless (all state lives in Postgres or Redis). s11's `docker-compose.prod.yml` ships this locally as three replicas behind nginx; s12's rate-limit middleware holds a single per-IP bucket across them via Redis. Production swaps nginx for ALB / k8s ingress without a code change.
+- **Postgres connection pool** → PgBouncer in transaction mode in front of a primary, with each replica's `pg.Pool` capped at 5–10 connections. Read-heavy workloads can fan out to a read replica via a connection-string switch in `DATABASE_URL`. The s11 overlay caps each replica at `DB_POOL_MAX=20` so three replicas stay under the default Postgres `max_connections=100`.
+- **Redis single node** → Redis Sentinel for HA failover, or Redis Cluster for sharding once a single primary saturates. Cache-aside fits both transparently. The rate-limit middleware would also need a connection switch, since `rate-limit-redis` supports a cluster-mode `sendCommandCluster` path; left unused today.
 - **Co-located load generator** (relevant only to local benchmarks) → run k6 on a separate host or use k6 Cloud / distributed k6.
 
-The `Benchmark.md` "Co-location penalty" section quantifies how much of the laptop result is artifact-of-environment vs real ceiling. Production numbers will be substantially higher on isolated hardware.
+The `Benchmark.md` "Co-location penalty" section quantifies how much of the laptop result is artifact-of-environment vs real ceiling. `Benchmark_prod.md` extends the story with the three-replica shape on the same host and identifies host CPU saturation (92–95%) as the laptop's hard wall — production numbers on isolated hardware will be substantially higher.
 
 ## Directory Layout
 
@@ -319,6 +337,7 @@ src/
 │       └── health.ts                    # GET /healthz
 ├── middleware/                          # Express middleware shared across routes
 │   ├── error-handler.ts
+│   ├── rate-limit.ts                    # Per-IP rate limiter + loopback / CIDR bypass
 │   ├── request-id.ts
 │   └── x-cache.ts
 ├── modules/

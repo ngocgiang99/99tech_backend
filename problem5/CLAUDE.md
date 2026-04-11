@@ -68,7 +68,7 @@ src/
     db/                           # Kysely + pg.Pool + Database type
     cache/                        # ioredis client + singleflight
   http/                           # Express wiring + non-feature routes
-  middleware/                     # request-id, error-handler, x-cache
+  middleware/                     # request-id, rate-limit, x-cache, error-handler
   modules/resources/              # Feature module
     presentation/                 # router, controller, mapper (toDto)
     application/                  # service, cursor, request-context
