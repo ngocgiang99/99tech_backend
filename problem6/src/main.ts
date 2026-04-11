@@ -6,6 +6,7 @@ import {
 import helmet from '@fastify/helmet';
 
 import { AppModule } from './app.module';
+import { ConfigService } from './config';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -15,7 +16,8 @@ async function bootstrap(): Promise<void> {
 
   await app.register(helmet);
 
-  const port = Number(process.env.PORT) || 3000;
+  const config = app.get(ConfigService);
+  const port = config.get('PORT');
   await app.listen({ host: '0.0.0.0', port });
 }
 

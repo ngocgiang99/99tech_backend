@@ -21,12 +21,13 @@ NODE_ENV  = "development"
 PORT      = "3000"
 
 # ─── Setup ───────────────────────────────────────────────────────────────────
+# First-clone bootstrap. Intentionally does NOT run `db:codegen` — that task
+# requires a live Postgres and a migrated schema, which a fresh clone does
+# not have. After `mise run setup`, the developer runs these in order on
+# first DB use: `mise run infra:up` → `mise run db:migrate` → `mise run db:codegen`.
 [tasks.setup]
-description = "Install dependencies and regenerate DB types"
-run = [
-  "pnpm install --frozen-lockfile",
-  "mise run db:codegen",
-]
+description = "Install dependencies (post-setup: infra:up, db:migrate, db:codegen)"
+run = "pnpm install --frozen-lockfile"
 
 # ─── Dev loop ────────────────────────────────────────────────────────────────
 [tasks.dev]
