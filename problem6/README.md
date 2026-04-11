@@ -748,7 +748,6 @@ problem6/
     │   │   │       └── jetstream.subscriber.ts      ← ephemeral push consumer for SSE fan-out
     │   │   ├── auth/
     │   │   │   ├── jwt.guard.ts
-    │   │   │   ├── jwks.cache.ts
     │   │   │   └── action-token.verifier.impl.ts
     │   │   ├── outbox/
     │   │   │   ├── outbox.repository.ts
@@ -852,6 +851,27 @@ This is a **single bounded context** with a single aggregate. A multi-module spl
 - [mise](https://mise.jdx.dev/) installed (`curl https://mise.run | sh`)
 - Docker 24+ with Docker Compose v2
 - That's it — `mise` installs Node.js, pnpm, and everything else.
+
+**k6 (for load tests only):**
+```bash
+# Option A — via mise (if k6 tool is listed in mise.toml)
+mise install k6
+
+# Option B — via Homebrew (macOS)
+brew install k6
+
+# Option C — official installer
+# https://k6.io/docs/get-started/installation/
+```
+
+Run the load test (requires docker-compose stack to be up):
+```bash
+cd problem6
+# Quick 1-minute smoke run
+mise run test:load -- --quick
+# Full 40-minute soak test
+mise run test:load
+```
 
 ### 13.2 Quickstart
 
@@ -976,6 +996,16 @@ ghcr.io/acme/problem6-scoreboard:prod
 4. Deploy 3 API replicas behind the load balancer.
 5. Wait for `/ready` to return 200 (it checks Postgres, Redis, **and** JetStream reachability) before adding replicas to the LB pool.
 6. Run synthetic smoke test (`POST /scores:increment` with a signed test token) and verify that an SSE client receives the `leaderboard.updated` event.
+7. **MIN-02 verification** — run the cold-rebuild benchmark to confirm NFR-09 (< 60 s for 10M rows):
+   ```bash
+   pnpm tsx scripts/benchmark-rebuild.ts --rows 10000000
+   # Expected output: {"usersProcessed":10000000,"elapsedMs":<number>,"durationOk":true}
+   # Exit code 0 = pass, 1 = fail (rebuild took ≥ 60 s — investigate Postgres/Redis connection or hardware)
+   ```
+   For a quick smoke check during local dev:
+   ```bash
+   pnpm tsx scripts/benchmark-rebuild.ts  # default 100k rows
+   ```
 
 ### 16.2 Rollback
 

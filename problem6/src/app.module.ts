@@ -5,6 +5,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { ConfigModule, ConfigService } from './config';
 import { DatabaseModule } from './database';
 import { NatsModule } from './scoreboard/infrastructure/messaging/nats';
+import { HealthModule } from './scoreboard/interface/health';
 import { buildPinoLoggerOptions } from './shared/logger';
 import { MetricsModule } from './shared/metrics';
 import { ReadinessModule } from './shared/readiness';
@@ -27,6 +28,7 @@ import { ScoreboardModule } from './scoreboard/scoreboard.module';
     DatabaseModule,
     RedisModule,
     NatsModule,
+    HealthModule,
     ScoreboardModule,
   ],
 })

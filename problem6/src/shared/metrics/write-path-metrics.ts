@@ -17,6 +17,8 @@ export const METRIC_RATE_LIMIT_HITS_TOTAL =
   'metric.scoreboard_rate_limit_hits_total';
 export const METRIC_PROCESS_START_TIME_SECONDS =
   'metric.scoreboard_process_start_time_seconds';
+export const METRIC_RATE_LIMIT_FAILED_CLOSED_TOTAL =
+  'metric.scoreboard_rate_limit_failed_closed_total';
 
 /**
  * HTTP request counter — incremented per completed request.
@@ -71,6 +73,17 @@ export const rateLimitHitsTotal = new Counter({
   name: 'scoreboard_rate_limit_hits_total',
   help: 'Total rate limit checks by outcome (allowed|rejected|circuit_open)',
   labelNames: ['outcome'] as const,
+  registers: [registry],
+});
+
+/**
+ * Rate limit fail-CLOSED counter — incremented each time the guard throws 503
+ * because Redis is unreachable (bucket.consume threw an error).
+ * No labels — a rising count is the alert signal.
+ */
+export const rateLimitFailedClosedTotal = new Counter({
+  name: 'scoreboard_rate_limit_failed_closed_total',
+  help: 'Total times the rate-limit guard failed CLOSED (503) due to a Redis error',
   registers: [registry],
 });
 

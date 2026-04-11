@@ -19,11 +19,13 @@ import { ActionsController } from './interface/http/controllers/actions.controll
 import { LeaderboardController } from './interface/http/controllers/leaderboard.controller';
 import { LeaderboardStreamController } from './interface/http/controllers/leaderboard-stream.controller';
 import { ScoreboardController } from './interface/http/controllers/scoreboard.controller';
+import { HealthModule } from './interface/health';
 
 // RedisModule is @Global() and already imported in AppModule — do NOT import it here.
 // NatsModule is @Global() and already imported in AppModule — do NOT import it here.
 
 @Module({
+  imports: [HealthModule],
   controllers: [
     ActionsController,
     ScoreboardController,

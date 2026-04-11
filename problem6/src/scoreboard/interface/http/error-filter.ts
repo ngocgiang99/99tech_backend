@@ -45,6 +45,24 @@ function deriveHttpExceptionCode(status: number): string {
   }
 }
 
+// GAP-03 / Decision 1 — Redis SPOF fail-CLOSED. When ioredis throws due to a
+// Redis outage (max-retries, connection refused/reset/timeout), every request
+// that touches Redis MUST surface as 503 TEMPORARILY_UNAVAILABLE, not 500.
+// This keeps the fail-closed contract uniform across the entire write path.
+function isRedisInfrastructureError(err: Error): boolean {
+  if (err.name === 'MaxRetriesPerRequestError' || err.name === 'AbortError') {
+    return true;
+  }
+  const msg = err.message;
+  return (
+    msg.includes('Reached the max retries per request') ||
+    msg.includes('Connection is closed') ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('ENOTFOUND') ||
+    msg.includes('ETIMEDOUT')
+  );
+}
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -96,6 +114,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
           safeMessage = exception.message;
         }
       }
+    } else if (
+      exception instanceof Error &&
+      isRedisInfrastructureError(exception)
+    ) {
+      status = 503;
+      code = 'TEMPORARILY_UNAVAILABLE';
+      safeMessage = 'Service temporarily unavailable';
+      this.logger.error(
+        `[${requestId}] Redis infrastructure error (fail-CLOSED): ${exception.message}`,
+        exception.stack,
+      );
     } else if (exception instanceof Error) {
       // Unhandled domain / infrastructure errors → 500
       status = 500;

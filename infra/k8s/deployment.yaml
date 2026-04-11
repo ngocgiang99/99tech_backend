@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scoreboard
+  labels:
+    app: scoreboard
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: scoreboard
+  template:
+    metadata:
+      labels:
+        app: scoreboard
+    spec:
+      containers:
+        - name: scoreboard-api
+          image: "your-registry/problem6-scoreboard-api:v1.0.0-rc1"  # TODO: replace with actual image
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          envFrom:
+            - configMapRef:
+                name: scoreboard-config
+            - secretRef:
+                name: scoreboard-secret
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3

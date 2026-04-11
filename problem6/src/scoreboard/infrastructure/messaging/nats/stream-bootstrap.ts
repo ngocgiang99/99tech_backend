@@ -11,6 +11,28 @@ import { ConfigService } from '../../../../config';
 
 const STREAM_ALREADY_EXISTS_CODE = 10058;
 
+// NATS SDK wraps jetstream API responses in several error shapes depending on
+// the code path. The spec-driven contract is: on code 10058 ("stream already
+// exists with different config"), warn and continue — never crash boot. Duck-
+// type match all known shapes rather than trusting instanceof.
+function isStreamAlreadyExistsError(err: unknown): boolean {
+  if (err instanceof NatsError && err.isJetStreamError()) {
+    if (err.jsError()?.code === STREAM_ALREADY_EXISTS_CODE) {
+      return true;
+    }
+  }
+  if (err && typeof err === 'object') {
+    const anyErr = err as {
+      api_error?: { err_code?: number };
+      code?: string | number;
+    };
+    if (anyErr.api_error?.err_code === STREAM_ALREADY_EXISTS_CODE) {
+      return true;
+    }
+  }
+  return false;
+}
+
 @Injectable()
 export class StreamBootstrap implements OnApplicationBootstrap {
   private readonly logger = new Logger(StreamBootstrap.name);
@@ -39,11 +61,7 @@ export class StreamBootstrap implements OnApplicationBootstrap {
       await jsm.streams.add(streamConfig);
       this.logger.log('SCOREBOARD stream created');
     } catch (err) {
-      if (
-        err instanceof NatsError &&
-        err.isJetStreamError() &&
-        err.jsError()?.code === STREAM_ALREADY_EXISTS_CODE
-      ) {
+      if (isStreamAlreadyExistsError(err)) {
         this.logger.log('stream already configured');
         await this.checkForDrift(jsm, streamConfig);
         return;

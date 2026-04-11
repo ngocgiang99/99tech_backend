@@ -6,5 +6,11 @@ import { ConfigService } from '../../../../config';
 export async function buildNatsClient(
   config: ConfigService,
 ): Promise<NatsConnection> {
-  return connect({ servers: config.get('NATS_URL') });
+  const rawUrl = config.get('NATS_URL');
+  const parsed = new URL(rawUrl);
+  return connect({
+    servers: `${parsed.hostname}:${parsed.port || 4222}`,
+    ...(parsed.username ? { user: parsed.username } : {}),
+    ...(parsed.password ? { pass: parsed.password } : {}),
+  });
 }

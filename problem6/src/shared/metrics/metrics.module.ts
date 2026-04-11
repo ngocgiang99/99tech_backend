@@ -10,9 +10,11 @@ import {
   METRIC_HTTP_REQUEST_DURATION_SECONDS,
   METRIC_HTTP_REQUESTS_TOTAL,
   METRIC_PROCESS_START_TIME_SECONDS,
+  METRIC_RATE_LIMIT_FAILED_CLOSED_TOTAL,
   METRIC_RATE_LIMIT_HITS_TOTAL,
   METRIC_SCORE_INCREMENT_TOTAL,
   processStartTimeSeconds,
+  rateLimitFailedClosedTotal,
   rateLimitHitsTotal,
   scoreIncrementTotal,
 } from './write-path-metrics';
@@ -59,6 +61,10 @@ import {
       provide: METRIC_PROCESS_START_TIME_SECONDS,
       useValue: processStartTimeSeconds,
     },
+    {
+      provide: METRIC_RATE_LIMIT_FAILED_CLOSED_TOTAL,
+      useValue: rateLimitFailedClosedTotal,
+    },
   ],
   exports: [
     MetricsInterceptor,
@@ -69,6 +75,7 @@ import {
     METRIC_ACTION_TOKEN_VERIFY_TOTAL,
     METRIC_RATE_LIMIT_HITS_TOTAL,
     METRIC_PROCESS_START_TIME_SECONDS,
+    METRIC_RATE_LIMIT_FAILED_CLOSED_TOTAL,
   ],
 })
 export class MetricsModule {}

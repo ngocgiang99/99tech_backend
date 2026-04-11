@@ -29,10 +29,18 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 # Compiles TypeScript and prunes dev deps. Kysely does NOT need a codegen step
 # at build time — its TypeScript types are committed to the repo under
 # src/database/.
+#
+# NOTE: `jose` v6 is ESM-only.  The NestJS webpack custom config in
+# webpack.config.js enables `experiments.outputModule` so the bundle is
+# emitted as an ES module instead of CommonJS.  This lets the bundle use
+# `import jose from "jose"` without a CJS→ESM compatibility shim.
+# The runtime package.json receives `"type":"module"` so Node loads the
+# bundle as ESM (package.json is patched inside the container only).
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm nest build \
+RUN pnpm nest build --webpack \
+ && node -e "const p=JSON.parse(require('fs').readFileSync('package.json','utf8')); p.type='module'; require('fs').writeFileSync('package.json',JSON.stringify(p,null,2));" \
  && pnpm prune --prod --ignore-scripts
 
 # ─── Stage 4 · runtime (final image) ─────────────────────────────────────────
@@ -55,6 +63,11 @@ ENV NODE_ENV=production \
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist         ./dist
 COPY --from=build --chown=app:app /app/package.json ./package.json
+# Lua scripts are loaded at runtime via __dirname (relative to /app).
+# Webpack sets __dirname to the source file's relative path, so the CWD-relative
+# lookup is: src/scoreboard/infrastructure/rate-limit/lua/token-bucket.lua
+COPY --from=build --chown=app:app /app/src/scoreboard/infrastructure/rate-limit/lua \
+     ./src/scoreboard/infrastructure/rate-limit/lua
 
 USER app
 EXPOSE 3000

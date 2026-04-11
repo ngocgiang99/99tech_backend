@@ -77,8 +77,14 @@ description = "Unit tests with coverage — fails build if <80% lines/branches/f
 run = "pnpm jest --config jest.config.ts --coverage"
 
 [tasks."test:load"]
-description = "k6 load test — 10k SSE connections + write burst"
-run = "k6 run tests/load/scoreboard.k6.ts"
+description = "k6 load test — 10k SSE connections + write burst (pass -- --quick for a 1-minute smoke run)"
+run = """
+if [ "${1:-}" = "--quick" ]; then
+  K6_QUICK=1 k6 run test/load/scoreboard.k6.ts
+else
+  k6 run test/load/scoreboard.k6.ts
+fi
+"""
 
 # ─── Database (Kysely + kysely-ctl) ──────────────────────────────────────────
 [tasks."db:migrate"]

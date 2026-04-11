@@ -189,4 +189,68 @@ describe('HttpExceptionFilter', () => {
       expect(sendMock.mock.calls[0][0].error.requestId).toBeNull();
     });
   });
+
+  describe('Redis infrastructure errors (GAP-03 fail-CLOSED)', () => {
+    it('maps MaxRetriesPerRequestError name to 503 TEMPORARILY_UNAVAILABLE', () => {
+      const err = new Error('Reached the max retries per request limit (which is 1)');
+      err.name = 'MaxRetriesPerRequestError';
+      const { host, statusMock, sendMock } = makeHost('req-redis-1');
+
+      filter.catch(err, host);
+
+      expect(statusMock).toHaveBeenCalledWith(503);
+      expect(sendMock.mock.calls[0][0].error.code).toBe('TEMPORARILY_UNAVAILABLE');
+      expect(sendMock.mock.calls[0][0].error.message).toBe('Service temporarily unavailable');
+    });
+
+    it('maps ECONNREFUSED to 503 TEMPORARILY_UNAVAILABLE', () => {
+      const err = new Error('connect ECONNREFUSED 127.0.0.1:6379');
+      const { host, statusMock, sendMock } = makeHost('req-redis-2');
+
+      filter.catch(err, host);
+
+      expect(statusMock).toHaveBeenCalledWith(503);
+      expect(sendMock.mock.calls[0][0].error.code).toBe('TEMPORARILY_UNAVAILABLE');
+    });
+
+    it('maps ENOTFOUND to 503 TEMPORARILY_UNAVAILABLE', () => {
+      const err = new Error('getaddrinfo ENOTFOUND problem6-redis');
+      const { host, statusMock, sendMock } = makeHost('req-redis-3');
+
+      filter.catch(err, host);
+
+      expect(statusMock).toHaveBeenCalledWith(503);
+      expect(sendMock.mock.calls[0][0].error.code).toBe('TEMPORARILY_UNAVAILABLE');
+    });
+
+    it('maps AbortError to 503 TEMPORARILY_UNAVAILABLE', () => {
+      const err = new Error('Command aborted due to connection close');
+      err.name = 'AbortError';
+      const { host, statusMock } = makeHost('req-redis-4');
+
+      filter.catch(err, host);
+
+      expect(statusMock).toHaveBeenCalledWith(503);
+    });
+
+    it('maps "Connection is closed" to 503 TEMPORARILY_UNAVAILABLE', () => {
+      const err = new Error('Connection is closed.');
+      const { host, statusMock, sendMock } = makeHost('req-redis-5');
+
+      filter.catch(err, host);
+
+      expect(statusMock).toHaveBeenCalledWith(503);
+      expect(sendMock.mock.calls[0][0].error.code).toBe('TEMPORARILY_UNAVAILABLE');
+    });
+
+    it('does NOT map unrelated Error messages to 503', () => {
+      const err = new Error('Something unrelated broke');
+      const { host, statusMock, sendMock } = makeHost('req-generic');
+
+      filter.catch(err, host);
+
+      expect(statusMock).toHaveBeenCalledWith(500);
+      expect(sendMock.mock.calls[0][0].error.code).toBe('INTERNAL_ERROR');
+    });
+  });
 });

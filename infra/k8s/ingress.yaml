@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scoreboard
+  labels:
+    app: scoreboard
+  annotations:
+    # Sticky sessions for SSE long-lived connections on /v1/leaderboard/stream
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/affinity-mode: "persistent"
+    nginx.ingress.kubernetes.io/session-cookie-name: "scoreboard-sticky"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/v1/leaderboard/stream"
+    # SSE requires long read timeout and disabled buffering
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: "scoreboard.example.com"  # TODO: replace with your actual domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 3000

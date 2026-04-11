@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scoreboard-config
+  labels:
+    app: scoreboard
+data:
+  # Runtime
+  NODE_ENV: "production"
+  PORT: "3000"
+
+  # Datastores — TODO: replace with actual service endpoints in your cluster
+  DATABASE_URL: "postgres://user:password@postgres:5432/scoreboard"
+  REDIS_URL: "redis://redis:6379"
+
+  # NATS JetStream — TODO: replace with actual NATS cluster endpoints
+  NATS_URL: "nats://nats:4222"
+  NATS_STREAM_NAME: "SCOREBOARD"
+  NATS_STREAM_MAX_AGE_SECONDS: "2592000"
+  NATS_STREAM_MAX_MSGS: "1000000"
+  NATS_STREAM_MAX_BYTES: "1073741824"
+  NATS_STREAM_REPLICAS: "1"  # TODO: set to 3 in production NATS cluster
+  NATS_DEDUP_WINDOW_SECONDS: "120"
+
+  # Auth token TTL (non-secret)
+  ACTION_TOKEN_TTL_SECONDS: "300"
+
+  # Rate limiting & SSE
+  RATE_LIMIT_PER_SEC: "10"
+  MAX_SSE_CONN_PER_INSTANCE: "5000"
+  LEADERBOARD_REBUILD_TOP_N: "10000"
+
+  # Outbox publisher
+  OUTBOX_POLL_INTERVAL_MS: "50"
+  OUTBOX_LOCK_TTL_SECONDS: "10"
+  OUTBOX_COALESCE_WINDOW_MS: "100"
+
+  # SSE backpressure
+  SSE_BACKPRESSURE_MAX_PENDING_MESSAGES: "50"
+  SSE_SLOW_CLIENT_BUFFER_TIMEOUT_MS: "5000"
+  SSE_HEARTBEAT_INTERVAL_MS: "15000"
+
+  # Observability
+  LOG_LEVEL: "info"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""  # TODO: set to your OTLP collector endpoint

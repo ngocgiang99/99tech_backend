@@ -4,6 +4,7 @@
   "sourceRoot": "src",
   "compilerOptions": {
     "deleteOutDir": true,
+    "webpackConfigPath": "webpack.config.js",
     "assets": [
       {
         "include": "scoreboard/infrastructure/rate-limit/lua/*.lua",

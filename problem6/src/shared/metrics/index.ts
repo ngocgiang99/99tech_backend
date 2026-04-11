@@ -8,10 +8,12 @@ export {
   METRIC_ACTION_TOKEN_VERIFY_TOTAL,
   METRIC_RATE_LIMIT_HITS_TOTAL,
   METRIC_PROCESS_START_TIME_SECONDS,
+  METRIC_RATE_LIMIT_FAILED_CLOSED_TOTAL,
   httpRequestsTotal,
   httpRequestDurationSeconds,
   scoreIncrementTotal,
   actionTokenVerifyTotal,
   rateLimitHitsTotal,
   processStartTimeSeconds,
+  rateLimitFailedClosedTotal,
 } from './write-path-metrics';

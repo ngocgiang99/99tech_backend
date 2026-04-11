@@ -138,16 +138,14 @@ sequenceDiagram
     participant U as User (Browser)
     participant LB as Load Balancer
     participant API as API (NestJS/Fastify)
-    participant JWKS as Identity Service<br/>(JWKS)
     participant R as Redis
 
-    U->>LB: POST /v1/actions:issue-token<br/>Authorization: Bearer &lt;jwt&gt;<br/>{ actionType }
+    U->>LB: POST /v1/actions:issue-token { actionType }
+    Note over U,LB: Header — Authorization: Bearer <jwt>
     LB->>API: forward
-    API->>JWKS: (cached) fetch public key
-    JWKS-->>API: key
-    API->>API: verify JWT (sig, aud, exp)
+    API->>API: verify JWT (HS256 vs INTERNAL_JWT_SECRET, exp)
     API->>API: generate actionId (uuid v4)
-    API->>R: SET NX EX 300 action:issued:&lt;actionId&gt;
+    API->>R: SET NX EX 300 action:issued:<actionId>
     API->>API: HMAC-sign { sub, aid, atp, mxd, iat, exp }
     API-->>U: 200 { actionId, actionToken, expiresAt, maxDelta }
 ```
@@ -165,13 +163,13 @@ sequenceDiagram
     participant R as Redis
     participant PG as Postgres
     participant OB as Outbox Publisher
-    participant JS as NATS JetStream<br/>stream: SCOREBOARD
+    participant JS as NATS JetStream (SCOREBOARD)
 
-    U->>LB: POST /v1/scores:increment<br/>{ actionId, actionToken, delta }
+    U->>LB: POST /v1/scores:increment { actionId, actionToken, delta }
     LB->>API: forward
     API->>API: verify JWT
-    API->>API: verify action token<br/>(HMAC, exp, sub match, mxd ≥ delta)
-    API->>R: SET NX EX 86400 idempotency:action:&lt;actionId&gt;
+    API->>API: verify action token (HMAC, exp, sub match, mxd ≥ delta)
+    API->>R: SET NX EX 86400 idempotency:action:<actionId>
 
     alt NX wins — first execution
         API->>PG: BEGIN
@@ -187,11 +185,11 @@ sequenceDiagram
 
     Note over OB: runs continuously (leader-elected)
     OB->>PG: SELECT * FROM outbox_events WHERE published_at IS NULL
-    OB->>R: ZADD leaderboard:global &lt;new_total&gt; &lt;userId&gt;
+    OB->>R: ZADD leaderboard:global <new_total> <userId>
     OB->>R: ZREVRANGE 0 9 WITHSCORES (new top-10)
     alt top-10 changed
-        OB->>JS: js.publish("scoreboard.leaderboard.updated",<br/>payload, {msgID: outbox.id})
-        Note over JS: dedup_window = 2m<br/>retry-safe
+        OB->>JS: js.publish(scoreboard.leaderboard.updated, payload, msgID=outbox.id)
+        Note over JS: dedup_window = 2m, retry-safe
     end
     OB->>PG: UPDATE outbox_events SET published_at = now()
 ```
@@ -204,33 +202,35 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant U as User
-    participant LB as Load Balancer<br/>(sticky)
+    participant LB as Load Balancer
     participant API as API instance
     participant R as Redis
-    participant JS as NATS JetStream<br/>stream: SCOREBOARD
+    participant JS as NATS JetStream
 
-    Note over API,JS: On boot, each API instance creates an<br/>ephemeral push consumer:<br/>filter=scoreboard.leaderboard.updated,<br/>deliver=new, ack=explicit
+    Note over API,JS: On boot, each API instance creates an ephemeral push consumer
+    Note over API,JS: filter scoreboard.leaderboard.updated, deliver=new, ack=explicit
 
-    U->>LB: GET /v1/leaderboard/stream<br/>Accept: text/event-stream<br/>Authorization: Bearer &lt;jwt&gt;
-    LB->>API: forward (sticky session)
+    U->>LB: GET /v1/leaderboard/stream with Bearer jwt
+    LB->>API: forward via sticky session
     API->>API: verify JWT
     API->>R: ZREVRANGE leaderboard:global 0 9 WITHSCORES
     R-->>API: current top-10
-    API-->>U: event: snapshot<br/>data: { top10 }
+    API-->>U: event snapshot with top10 payload
 
     loop whenever top-10 changes
-        JS-->>API: deliver msg { top10 }
-        API-->>U: event: leaderboard.updated<br/>data: { top10 }
+        JS-->>API: deliver msg with top10
+        API-->>U: event leaderboard.updated with top10
         API->>JS: ack
     end
 
-    Note over API,JS: If API crashes pre-ack,<br/>JetStream redelivers after ack_wait.
+    Note over API,JS: If API crashes pre-ack, JetStream redelivers after ack_wait
 
     loop every 15s
-        API-->>U: event: heartbeat<br/>data: "ping"
+        API-->>U: event heartbeat ping
     end
 
-    Note over U,API: On disconnect, the browser auto-reconnects<br/>with Last-Event-ID; the server replies with<br/>a fresh snapshot and resumes push.
+    Note over U,API: On disconnect, browser auto-reconnects with Last-Event-ID
+    Note over U,API: Server replies with a fresh snapshot and resumes push
 ```
 
 ---
@@ -239,11 +239,11 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Issued: POST /actions:issue-token
-    Issued --> Verified: POST /scores:increment<br/>(HMAC + exp + sub OK)
+    [*] --> Issued: POST /actions issue-token
+    Issued --> Verified: POST /scores increment (HMAC + exp + sub OK)
     Issued --> Expired: now > exp
-    Verified --> Consumed: SET NX wins<br/>score committed
-    Verified --> Rejected: SET NX loses<br/>(replay detected)
+    Verified --> Consumed: SET NX wins, score committed
+    Verified --> Rejected: SET NX loses, replay detected
     Expired --> [*]
     Consumed --> [*]
     Rejected --> [*]

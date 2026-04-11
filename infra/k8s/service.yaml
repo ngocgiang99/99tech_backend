@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: scoreboard
+  labels:
+    app: scoreboard
+spec:
+  type: ClusterIP
+  selector:
+    app: scoreboard
+  ports:
+    - name: http
+      protocol: TCP
+      port: 3000
+      targetPort: 3000
