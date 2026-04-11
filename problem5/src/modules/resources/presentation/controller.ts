@@ -17,10 +17,11 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 function handleZodError(err: ZodError): ValidationError {
   const details = err.errors.map((e) => ({
-    field: e.path.join('.'),
+    path: e.path.join('.'),
+    code: e.code,
     message: e.message,
   }));
-  return new ValidationError('Validation failed', details);
+  return new ValidationError('Request validation failed', details);
 }
 
 type ResourceOperation = 'create' | 'read' | 'list' | 'update' | 'delete';

@@ -4,7 +4,7 @@ import pinoHttp from 'pino-http';
 import type { Kysely } from 'kysely';
 import type Redis from 'ioredis';
 
-import { createErrorHandler } from '../middleware/error-handler.js';
+import { createErrorHandler, type ErrorHandlerOptions } from '../middleware/error-handler.js';
 import { requestIdMiddleware } from '../middleware/request-id.js';
 import type { HealthCheckRegistry } from '../shared/health.js';
 import type { Database } from '../infrastructure/db/schema.js';
@@ -35,6 +35,7 @@ export function buildApp(
   db: Kysely<Database>,
   cache: CacheWiring,
   metricsWiring?: MetricsWiring,
+  errorHandlerOpts?: ErrorHandlerOptions,
 ): express.Express {
   const app = express();
 
@@ -76,7 +77,10 @@ export function buildApp(
   app.use('/resources', resources.router);
 
   // Central error handler (must be last)
-  app.use(createErrorHandler(logger));
+  app.use(createErrorHandler(logger, {
+    ...(errorHandlerOpts ?? {}),
+    ...(metricsWiring?.enabled ? { metrics: metricsWiring.metrics } : {}),
+  }));
 
   return app;
 }

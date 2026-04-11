@@ -1,4 +1,12 @@
-## ADDED Requirements
+# error-handling
+
+## Purpose
+
+Defines the end-to-end contract for how the Resources API classifies, logs, and exposes errors. The shape of every error response is fixed by an allowlist (`{error: {code, message, requestId, details?, errorId?}}`); the server-side log entry for the same error carries a rich metadata payload (request id, route pattern, sanitized headers, body shape, cause chain, stack) so an operator can diagnose any incident from logs alone. A per-error `errorId` UUID correlates the public response with its log entry — a user reports the id from a 5xx, and the engineer pipes the JSON logs through `jq 'select(.errorId == "...")'` to find the request without re-running it.
+
+The design takes an **allowlist posture for the public response** (built from scratch by `toPublicResponse`, never copied from the underlying error object) and a **denylist posture for header scrubbing** (sensitive header names are redacted before logging). This combination prevents structural leaks (allowlist) AND header-value leaks (denylist) without requiring an exhaustive enumeration of either. An integration test (`tests/integration/errors/leak.test.ts`) actively scans error responses for leak indicators (`pg`, `kysely`, `SELECT `, `node_modules`, …) as a belt-and-braces guard against regressions where someone splices unsafe data into `message`. Postgres errors are translated into `AppError` subclasses at the data-access boundary (`src/infrastructure/db/error-mapper.ts`), so the service layer only ever sees typed errors; the middleware's job is reduced to wrapping any remaining unknown error in `InternalError`, logging, and formatting the response.
+
+## Requirements
 
 ### Requirement: Error Class Hierarchy
 

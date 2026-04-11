@@ -1,6 +1,8 @@
 import type { Kysely, SelectQueryBuilder } from 'kysely';
 import { sql } from 'kysely';
 
+import { mapDbError } from '../../../infrastructure/db/error-mapper.js';
+import { InternalError } from '../../../shared/errors.js';
 import type { Database, Resource } from '../../../infrastructure/db/schema.js';
 import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery, SortValue } from '../schema.js';
 import type { CursorPayload } from '../application/cursor.js';
@@ -81,30 +83,38 @@ function applySortOrder(qb: ResourceSelectQuery, sortConfig: SortConfig): Resour
 export function createResourceRepository(db: Kysely<Database>): ResourceRepository {
   return {
     async create(input: CreateResourceInput): Promise<Resource> {
-      const [row] = await db
-        .insertInto('resources')
-        .values({
-          name: input.name,
-          type: input.type,
-          status: input.status ?? 'active',
-          tags: input.tags ?? [],
-          owner_id: input.ownerId ?? null,
-          metadata: input.metadata ?? {},
-        })
-        .returningAll()
-        .execute();
+      try {
+        const [row] = await db
+          .insertInto('resources')
+          .values({
+            name: input.name,
+            type: input.type,
+            status: input.status ?? 'active',
+            tags: input.tags ?? [],
+            owner_id: input.ownerId ?? null,
+            metadata: input.metadata ?? {},
+          })
+          .returningAll()
+          .execute();
 
-      if (!row) throw new Error('Insert did not return a row');
-      return row;
+        if (!row) throw new InternalError('Insert did not return a row');
+        return row;
+      } catch (err) {
+        throw mapDbError(err);
+      }
     },
 
     async findById(id: string): Promise<Resource | null> {
-      const row = await db
-        .selectFrom('resources')
-        .selectAll()
-        .where('id', '=', id)
-        .executeTakeFirst();
-      return row ?? null;
+      try {
+        const row = await db
+          .selectFrom('resources')
+          .selectAll()
+          .where('id', '=', id)
+          .executeTakeFirst();
+        return row ?? null;
+      } catch (err) {
+        throw mapDbError(err);
+      }
     },
 
     async list(query: ListResourcesQuery): Promise<ListResult> {
@@ -145,7 +155,13 @@ export function createResourceRepository(db: Kysely<Database>): ResourceReposito
 
       // Apply sort + limit+1
       qb = applySortOrder(qb, sortConfig);
-      const rows = await qb.limit(limit + 1).execute();
+
+      let rows: Resource[];
+      try {
+        rows = await qb.limit(limit + 1).execute();
+      } catch (err) {
+        throw mapDbError(err);
+      }
 
       const hasMore = rows.length > limit;
       const data = hasMore ? rows.slice(0, limit) : rows;
@@ -184,24 +200,32 @@ export function createResourceRepository(db: Kysely<Database>): ResourceReposito
       if ('ownerId' in input) updates.owner_id = input.ownerId ?? null;
       if (input.metadata !== undefined) updates.metadata = input.metadata;
 
-      const [row] = await db
-        .updateTable('resources')
-        .set(updates)
-        .where('id', '=', id)
-        .returningAll()
-        .execute();
+      try {
+        const [row] = await db
+          .updateTable('resources')
+          .set(updates)
+          .where('id', '=', id)
+          .returningAll()
+          .execute();
 
-      return row ?? null;
+        return row ?? null;
+      } catch (err) {
+        throw mapDbError(err);
+      }
     },
 
     async delete(id: string): Promise<boolean> {
-      const result = await db
-        .deleteFrom('resources')
-        .where('id', '=', id)
-        .returning('id')
-        .execute();
+      try {
+        const result = await db
+          .deleteFrom('resources')
+          .where('id', '=', id)
+          .returning('id')
+          .execute();
 
-      return result.length > 0;
+        return result.length > 0;
+      } catch (err) {
+        throw mapDbError(err);
+      }
     },
   };
 }

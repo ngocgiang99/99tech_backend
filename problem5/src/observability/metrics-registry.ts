@@ -42,6 +42,20 @@ export const DB_POOL_STATES = ['total', 'idle', 'waiting'] as const;
 export const RESOURCES_OPERATIONS = ['create', 'read', 'list', 'update', 'delete'] as const;
 export const RESOURCES_OUTCOMES = ['success', 'not_found', 'validation_error', 'error'] as const;
 
+// Error handler counter label allowlists.
+// `code` values come from the stable ErrorCode enum (never user-controlled).
+// `status` is a 3-digit HTTP status string (e.g. "400", "500").
+export const ERROR_CODES_LABELS = [
+  'VALIDATION',
+  'BAD_REQUEST',
+  'NOT_FOUND',
+  'CONFLICT',
+  'UNPROCESSABLE_ENTITY',
+  'RATE_LIMIT',
+  'DEPENDENCY_UNAVAILABLE',
+  'INTERNAL_ERROR',
+] as const;
+
 export interface MetricsRegistryOptions {
   collectDefaults: boolean;
 }
@@ -67,6 +81,9 @@ export class MetricsRegistry {
   readonly dbQueryErrorsTotal: Counter<'operation' | 'error_class'>;
 
   readonly resourcesOperationsTotal: Counter<'operation' | 'outcome'>;
+
+  /** Counts every error that reaches the central error handler, by code and HTTP status. */
+  readonly errorsTotal: Counter<'code' | 'status'>;
 
   constructor(opts: MetricsRegistryOptions) {
     this.registry = new Registry();
@@ -124,6 +141,13 @@ export class MetricsRegistry {
       name: 'resources_operations_total',
       help: 'Resources CRUD operations at the domain layer, by operation and outcome.',
       labelNames: ['operation', 'outcome'] as const,
+      registers: [this.registry],
+    });
+
+    this.errorsTotal = new Counter({
+      name: 'errors_total',
+      help: 'Total errors handled by the central error handler, by error code and HTTP status.',
+      labelNames: ['code', 'status'] as const,
       registers: [this.registry],
     });
 

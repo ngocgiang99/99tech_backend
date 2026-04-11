@@ -4,38 +4,168 @@ import pino from 'pino';
 
 import {
   AppError,
+  BadRequestError,
   ConflictError,
+  DependencyError,
+  InternalError,
   NotFoundError,
+  RateLimitError,
+  UnprocessableEntityError,
   ValidationError,
+  wrapUnknown,
 } from '../../../src/shared/errors.js';
+import { ERROR_CODE_META } from '../../../src/shared/error-codes.js';
 import { createErrorHandler } from '../../../src/middleware/error-handler.js';
 
-describe('AppError subclasses', () => {
-  it('ValidationError maps to 400 + VALIDATION code', () => {
+// ---------------------------------------------------------------------------
+// AppError subclass assertions
+// ---------------------------------------------------------------------------
+
+describe('AppError subclasses — instanceof and code', () => {
+  it('ValidationError extends AppError', () => {
+    expect(new ValidationError()).toBeInstanceOf(AppError);
+  });
+  it('BadRequestError extends AppError', () => {
+    expect(new BadRequestError()).toBeInstanceOf(AppError);
+  });
+  it('NotFoundError extends AppError', () => {
+    expect(new NotFoundError()).toBeInstanceOf(AppError);
+  });
+  it('ConflictError extends AppError', () => {
+    expect(new ConflictError()).toBeInstanceOf(AppError);
+  });
+  it('UnprocessableEntityError extends AppError', () => {
+    expect(new UnprocessableEntityError()).toBeInstanceOf(AppError);
+  });
+  it('RateLimitError extends AppError', () => {
+    expect(new RateLimitError()).toBeInstanceOf(AppError);
+  });
+  it('DependencyError extends AppError', () => {
+    expect(new DependencyError()).toBeInstanceOf(AppError);
+  });
+  it('InternalError extends AppError', () => {
+    expect(new InternalError()).toBeInstanceOf(AppError);
+  });
+});
+
+describe('AppError subclasses — default status from ERROR_CODE_META', () => {
+  it('ValidationError has status 400', () => {
+    expect(new ValidationError().status).toBe(ERROR_CODE_META.VALIDATION.status);
+  });
+  it('BadRequestError has status 400', () => {
+    expect(new BadRequestError().status).toBe(ERROR_CODE_META.BAD_REQUEST.status);
+  });
+  it('NotFoundError has status 404', () => {
+    expect(new NotFoundError().status).toBe(ERROR_CODE_META.NOT_FOUND.status);
+  });
+  it('ConflictError has status 409', () => {
+    expect(new ConflictError().status).toBe(ERROR_CODE_META.CONFLICT.status);
+  });
+  it('UnprocessableEntityError has status 422', () => {
+    expect(new UnprocessableEntityError().status).toBe(ERROR_CODE_META.UNPROCESSABLE_ENTITY.status);
+  });
+  it('RateLimitError has status 429', () => {
+    expect(new RateLimitError().status).toBe(ERROR_CODE_META.RATE_LIMIT.status);
+  });
+  it('DependencyError has status 503', () => {
+    expect(new DependencyError().status).toBe(ERROR_CODE_META.DEPENDENCY_UNAVAILABLE.status);
+  });
+  it('InternalError has status 500', () => {
+    expect(new InternalError().status).toBe(ERROR_CODE_META.INTERNAL_ERROR.status);
+  });
+});
+
+describe('AppError subclasses — constructor overrides', () => {
+  it('ValidationError accepts custom message and details', () => {
     const err = new ValidationError('bad input', [{ field: 'x', message: 'required' }]);
-    expect(err).toBeInstanceOf(AppError);
-    expect(err.status).toBe(400);
-    expect(err.code).toBe('VALIDATION');
+    expect(err.message).toBe('bad input');
     expect(err.details).toEqual([{ field: 'x', message: 'required' }]);
+    expect(err.code).toBe('VALIDATION');
   });
 
-  it('NotFoundError maps to 404 + NOT_FOUND code', () => {
+  it('ValidationError uses default message when none supplied', () => {
+    expect(new ValidationError().message).toBe(ERROR_CODE_META.VALIDATION.defaultMessage);
+  });
+
+  it('NotFoundError accepts custom message', () => {
     const err = new NotFoundError('Resource not found');
+    expect(err.message).toBe('Resource not found');
     expect(err.status).toBe(404);
     expect(err.code).toBe('NOT_FOUND');
   });
 
-  it('ConflictError maps to 409 + CONFLICT code', () => {
+  it('ConflictError accepts custom message', () => {
     const err = new ConflictError('duplicate');
+    expect(err.message).toBe('duplicate');
     expect(err.status).toBe(409);
     expect(err.code).toBe('CONFLICT');
   });
 
-  it('preserves the original message', () => {
-    const err = new ValidationError('custom');
-    expect(err.message).toBe('custom');
+  it('DependencyError accepts a cause', () => {
+    const cause = new Error('connection refused');
+    const err = new DependencyError(undefined, { cause });
+    expect(err.cause).toBe(cause);
+    expect(err.status).toBe(503);
+  });
+
+  it('InternalError uses generic message by default', () => {
+    expect(new InternalError().message).toBe(ERROR_CODE_META.INTERNAL_ERROR.defaultMessage);
   });
 });
+
+describe('Symbol.toStringTag', () => {
+  it('ValidationError has correct toStringTag', () => {
+    expect(new ValidationError()[Symbol.toStringTag]).toBe('ValidationError');
+  });
+  it('NotFoundError has correct toStringTag', () => {
+    expect(new NotFoundError()[Symbol.toStringTag]).toBe('NotFoundError');
+  });
+  it('InternalError has correct toStringTag', () => {
+    expect(new InternalError()[Symbol.toStringTag]).toBe('InternalError');
+  });
+  it('DependencyError has correct toStringTag', () => {
+    expect(new DependencyError()[Symbol.toStringTag]).toBe('DependencyError');
+  });
+});
+
+describe('wrapUnknown', () => {
+  it('wraps a plain Error in InternalError with cause set', () => {
+    const original = new Error('boom');
+    const wrapped = wrapUnknown(original);
+    expect(wrapped).toBeInstanceOf(InternalError);
+    expect(wrapped.cause).toBe(original);
+    expect(wrapped.status).toBe(500);
+    expect(wrapped.code).toBe('INTERNAL_ERROR');
+  });
+
+  it('is a pass-through for an existing AppError (===)', () => {
+    const err = new ValidationError('bad');
+    const result = wrapUnknown(err);
+    expect(result).toBe(err);
+  });
+
+  it('is a pass-through for any AppError subclass', () => {
+    const err = new NotFoundError('gone');
+    expect(wrapUnknown(err)).toBe(err);
+  });
+
+  it('wraps a thrown string in InternalError', () => {
+    const wrapped = wrapUnknown('something went wrong');
+    expect(wrapped).toBeInstanceOf(InternalError);
+    expect(wrapped.cause).toBe('something went wrong');
+  });
+
+  it('wraps a plain object in InternalError', () => {
+    const obj = { detail: 'unexpected' };
+    const wrapped = wrapUnknown(obj);
+    expect(wrapped).toBeInstanceOf(InternalError);
+    expect(wrapped.cause).toBe(obj);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createErrorHandler (legacy regression suite — must continue to pass)
+// ---------------------------------------------------------------------------
 
 function buildMockRes() {
   const res = {
@@ -123,7 +253,7 @@ describe('createErrorHandler', () => {
       error: { code: string; message: string; requestId: string };
     };
     expect(body.error.code).toBe('INTERNAL_ERROR');
-    expect(body.error.message).toBe('Internal Server Error');
+    expect(body.error.message).toBe('Internal server error');
     expect(body.error.requestId).toBe('req-123');
   });
 });

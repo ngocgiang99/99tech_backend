@@ -27,6 +27,9 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+  // Comma-separated list of additional header names to redact from error logs.
+  // Example: LOG_SCRUBBER_EXTRA_HEADERS=x-internal-secret,x-jwt
+  LOG_SCRUBBER_EXTRA_HEADERS: z.string().default(''),
 });
 
 export type Config = z.infer<typeof envSchema>;

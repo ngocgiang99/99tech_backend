@@ -45,6 +45,11 @@ export function createApp(deps: Deps): AppBundle {
   healthRegistry.register('db', dbHealthCheck(db));
   healthRegistry.register('cache', cacheHealthCheck(redis));
 
+  const extraScrubHeaders = config.LOG_SCRUBBER_EXTRA_HEADERS
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean);
+
   const app = buildApp(
     logger,
     healthRegistry,
@@ -58,6 +63,7 @@ export function createApp(deps: Deps): AppBundle {
       nodeEnv: config.NODE_ENV,
     },
     metrics && config.METRICS_ENABLED ? { metrics, enabled: true } : undefined,
+    { extraScrubHeaders },
   );
 
   return { app, healthRegistry };

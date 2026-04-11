@@ -410,6 +410,7 @@ All variables are listed in `.env.example` with their defaults.
 | `SHUTDOWN_TIMEOUT_MS`           | No       | `10000`                                            | Max ms to drain before force-exit   |
 | `METRICS_ENABLED`               | No       | `true`                                             | Master toggle for Prometheus metrics. When `false`, `/metrics` is not mounted and the HTTP/cache/db instrumentation does nothing. |
 | `METRICS_DEFAULT_METRICS`       | No       | `true`                                             | Whether to collect `prom-client`'s default Node.js metrics (CPU, heap, event loop lag, GC). Disable for narrower `/metrics` output. |
+| `LOG_SCRUBBER_EXTRA_HEADERS`    | No       | (empty)                                            | Comma-separated extra header names to redact from error logs in addition to the built-in denylist (`authorization`, `cookie`, `set-cookie`, `x-api-key`, `x-auth-token`, `proxy-authorization`). Case-insensitive. |
 
 ### Database Migrations
 
@@ -605,3 +606,121 @@ instrumentation entirely (zero overhead), which is useful for a
 head-to-head benchmark of "how much does Prometheus cost me?". The
 `Benchmark.md` cold/warm comparison was run with metrics off; an
 S07-follow-up comparison run would make the answer explicit.
+
+---
+
+## Error Contract
+
+Every error response on this API matches a fixed shape. Clients should
+treat the `code` field as the stable contract — strings in `message` are
+human-readable but may evolve, while `code` values never change without a
+deprecation cycle.
+
+### Response shape
+
+```json
+{
+  "error": {
+    "code": "VALIDATION",
+    "message": "Request validation failed",
+    "requestId": "f7c9a2b1-3e4d-4a5b-9c8d-1e2f3a4b5c6d",
+    "details": [
+      { "path": "name", "code": "too_small", "message": "String must contain at least 1 character(s)" }
+    ]
+  }
+}
+```
+
+Field rules:
+
+| Field        | Always present? | Notes                                                                 |
+|--------------|-----------------|-----------------------------------------------------------------------|
+| `code`       | Yes             | One of the eight stable codes in the table below.                     |
+| `message`    | Yes             | Human-readable, ≤ 200 chars (truncated with `...` when longer).       |
+| `requestId`  | Yes             | Echoed from `X-Request-Id`; correlates the response with access logs. |
+| `details`    | Only `VALIDATION` | Array of `{path, code, message}` per failed field.                  |
+| `errorId`    | Only `5xx`      | UUID; matches the `errorId` in the dev-log entry for the same error.  |
+
+The body is built from an **allowlist** in
+`src/shared/to-public-response.ts`. Implementation details (stack frames,
+file paths, SQL fragments, library names, raw exception text) are never
+copied through, even when the underlying error contains them.
+`tests/integration/errors/leak.test.ts` actively scans error bodies for
+known leak indicators (`pg`, `kysely`, `SELECT `, `node_modules`, …) and
+fails the build if any appear.
+
+### Stable error codes
+
+| Code                       | HTTP | When                                                                | Example response |
+|----------------------------|------|---------------------------------------------------------------------|------------------|
+| `VALIDATION`               | 400  | Request body / query / params fail Zod validation.                  | `{"error":{"code":"VALIDATION","message":"Request validation failed","requestId":"…","details":[{"path":"name","code":"too_small","message":"…"}]}}` |
+| `BAD_REQUEST`              | 400  | Request is structurally invalid (malformed JSON, oversized body).   | `{"error":{"code":"VALIDATION","message":"Request body is malformed JSON","requestId":"…"}}` (body-parser failures normalize to `VALIDATION`) |
+| `NOT_FOUND`                | 404  | Resource id does not exist.                                         | `{"error":{"code":"NOT_FOUND","message":"Resource not found","requestId":"…"}}` |
+| `CONFLICT`                 | 409  | Unique-constraint violation, optimistic-lock failure.               | `{"error":{"code":"CONFLICT","message":"Resource conflict","requestId":"…"}}` |
+| `UNPROCESSABLE_ENTITY`     | 422  | Request is well-formed but semantically rejected by the domain.     | `{"error":{"code":"UNPROCESSABLE_ENTITY","message":"Unprocessable entity","requestId":"…"}}` |
+| `RATE_LIMIT`               | 429  | Reserved — no rate limiter wired in this revision.                  | `{"error":{"code":"RATE_LIMIT","message":"Too many requests","requestId":"…"}}` |
+| `DEPENDENCY_UNAVAILABLE`   | 503  | Postgres deadlock, connection-pool exhaustion, query cancelled.     | `{"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"Upstream dependency is temporarily unavailable","requestId":"…"}}` |
+| `INTERNAL_ERROR`           | 500  | Anything unhandled. Always returns the generic message + `errorId`. | `{"error":{"code":"INTERNAL_ERROR","message":"Internal server error","requestId":"…","errorId":"…"}}` |
+
+The full enum lives in `src/shared/error-codes.ts` as an `as const`
+tuple, with the HTTP-status mapping in `ERROR_CODE_META`. New codes are
+appended to the tuple; existing codes are never removed or renamed.
+
+### `errorId` correlation flow
+
+When a request hits a 5xx, the middleware:
+
+1. Generates one UUID via `crypto.randomUUID()` — call it `errorId`.
+2. Writes a `pino` log entry at `error` level whose JSON payload includes
+   the `errorId`, the full error class, message, stack, walked `cause`
+   chain, request id, route pattern, sanitized headers, query, body
+   metadata (size + content type, never bytes), user-agent, remote
+   address, and timestamp. See `src/shared/error-metadata.ts` for the
+   exact field list.
+3. Returns the same `errorId` in the response body.
+
+A user reports "I got error `c9f1…`". An engineer pipes the JSON logs
+through `jq 'select(.errorId == "c9f1…")'` and gets the full request
+context immediately, without needing to reproduce the failure.
+
+`errorId` is **only** present on 5xx responses. 4xx responses are the
+client's fault and don't need server-side correlation; adding the field
+to every response would create false-positive noise in alerting and
+double UUID generation per request for no operational benefit.
+
+### Sensitive header scrubbing
+
+Before any error metadata is logged, request headers are passed through
+`scrubHeaders()` (`src/shared/sanitizer.ts`). The built-in denylist is
+case-insensitive and contains:
+
+```
+authorization, cookie, set-cookie, x-api-key, x-auth-token, proxy-authorization
+```
+
+Matching values become the literal string `"[REDACTED]"`. Operators can
+extend the list at deploy time without a code change via the
+`LOG_SCRUBBER_EXTRA_HEADERS` env var (comma-separated, also
+case-insensitive). For example:
+
+```bash
+LOG_SCRUBBER_EXTRA_HEADERS=x-internal-secret,x-jwt-bearer
+```
+
+The scrubber operates on a denylist, but the surrounding **log payload**
+operates on an allowlist: only fields explicitly built into
+`buildErrorMetadata` are ever logged. Request bodies are never logged —
+only `body.size` and `body.contentType`. The two strategies are
+complementary: the allowlist prevents structural leaks, the denylist
+prevents header-value leaks.
+
+### How to throw errors in this codebase
+
+Application code throws typed `AppError` subclasses; raw `throw new
+Error(...)` is forbidden across the module boundary and a unit test
+asserts every service-layer error is an `instanceof AppError`. The
+infrastructure layer (`src/infrastructure/db/error-mapper.ts`) translates
+Postgres errors into `AppError` subclasses at the data-access boundary,
+so the service layer only ever sees typed errors. The middleware's job
+is then reduced to: wrap any remaining unknown error in `InternalError`,
+log, format response.
