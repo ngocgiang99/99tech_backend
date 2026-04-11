@@ -1,8 +1,246 @@
 # Architecture
 
-This document describes the layered architecture of the Resources API. It is the authoritative reference for directory layout, dependency direction, layer enforcement, and the decisions behind what this project explicitly does *not* do.
+The Resources API is an HTTP CRUD service for a "resource" entity, backed by Postgres for durability and Redis for read-side caching. This document is the authoritative reference for **how the system is shaped**: what it talks to, how the modules decompose, what happens on a request, what the data looks like, how it deploys, and how it behaves when its dependencies fail.
 
-For day-to-day commands and the project's operational surface, see [`README.md`](./README.md). For project-specific conventions that affect automated tooling, see [`CLAUDE.md`](./CLAUDE.md).
+It is intended to be read in under 10 minutes by anyone who has not seen the code. The diagrams come first (skim in 30 s), the deeper layering and enforcement rules come after.
+
+For day-to-day commands and the project's operational surface, see [`README.md`](./README.md). For project-specific conventions that affect automated tooling, see [`CLAUDE.md`](./CLAUDE.md). For benchmark methodology and results, see [`Benchmark.md`](./Benchmark.md).
+
+## Contents
+
+- [Context Diagram](#context-diagram) — the service in its environment
+- [Container Diagram](#container-diagram) — internal module decomposition
+- [Request Flows](#request-flows) — sequence diagrams per endpoint (linked out)
+- [Data Model](#data-model) — Postgres schema and Redis key taxonomy
+- [Deployment](#deployment) — Docker Compose topology
+- [Failure Modes](#failure-modes) — what breaks and how it degrades
+- [Production Topology](#production-topology) — scale-out path beyond a single host
+- [Directory Layout](#directory-layout) — `src/` tree
+- [Dependency Direction](#dependency-direction) — layering rules
+- [Two Kinds of Infrastructure](#two-kinds-of-infrastructure) — top-level vs module-level
+- [Composition Layers](#composition-layers) — wiring chain from process to handler
+- [What This Architecture Is NOT](#what-this-architecture-is-not) — explicit non-goals
+- [Enforcement](#enforcement) — ESLint rules
+- [Adding a Feature](#adding-a-feature) — step-by-step
+
+## Context Diagram
+
+The service sits between HTTP clients (curl, browsers, k6 benchmark runner) and two stateful dependencies (Postgres for durability, Redis for caching). Nothing else. There are no upstream services to call, no message queues, no external APIs.
+
+```mermaid
+graph LR
+    Client["HTTP Client<br/>(curl / browser)"]
+    K6["k6 Benchmark Runner<br/>(benchmarks/scenarios/*.js)"]
+    API["Resources API<br/>(Express 5 + TS, port 3000)"]
+    PG[("Postgres 16<br/>(port 5432)")]
+    Redis[("Redis 7<br/>(port 6379)")]
+
+    Client -- "HTTP/1.1<br/>JSON · :3000" --> API
+    K6 -- "HTTP/1.1<br/>JSON · :3000" --> API
+    API -- "TCP · pg wire<br/>:5432" --> PG
+    API -- "TCP · RESP<br/>:6379" --> Redis
+```
+
+The API is the only component that speaks to Postgres and Redis. Clients never reach the data tier directly.
+
+## Container Diagram
+
+Inside the API process, the request path decomposes into a small number of named modules. Each box on the diagram corresponds to a real file in `src/`. Arrows show dependency direction (`A → B` means `A imports B`).
+
+```mermaid
+graph TD
+    subgraph http["HTTP Layer (src/http, src/middleware)"]
+        Router["Router<br/>src/modules/resources/presentation/router.ts"]
+        Controller["Controller<br/>src/modules/resources/presentation/controller.ts"]
+        Mapper["Mapper (toDto)<br/>src/modules/resources/presentation/mapper.ts"]
+        Middleware["Middleware<br/>request-id · x-cache · error-handler"]
+    end
+
+    subgraph app["Application Layer (src/modules/resources/application)"]
+        Service["ResourceService<br/>service.ts"]
+        Cursor["Cursor codec<br/>cursor.ts"]
+        ReqCtx["RequestContext<br/>request-context.ts"]
+    end
+
+    subgraph infra["Module Infrastructure (src/modules/resources/infrastructure)"]
+        IRepo["ResourceRepository<br/>(interface)"]
+        PgRepo["PostgresResourceRepository<br/>repository.ts"]
+        CachedRepo["CachedResourceRepository<br/>cached-repository.ts"]
+        Keys["cache-keys.ts<br/>(detailKey · listKey · version)"]
+    end
+
+    subgraph drivers["Driver Infrastructure (src/infrastructure)"]
+        Kysely["Kysely + pg.Pool<br/>db/client.ts"]
+        IORedis["ioredis client<br/>cache/client.ts"]
+        Singleflight["Singleflight<br/>cache/singleflight.ts"]
+    end
+
+    subgraph platform["Cross-Cutting (src/shared)"]
+        Health["HealthCheckRegistry<br/>health.ts"]
+        Shutdown["ShutdownManager<br/>shutdown.ts"]
+        Errors["AppError taxonomy<br/>errors.ts"]
+        Logger["Pino logger<br/>logger.ts"]
+    end
+
+    Middleware --> Router
+    Router --> Controller
+    Controller --> Service
+    Controller --> Mapper
+    Service --> IRepo
+    CachedRepo -. implements .-> IRepo
+    PgRepo -. implements .-> IRepo
+    CachedRepo --> PgRepo
+    CachedRepo --> IORedis
+    CachedRepo --> Singleflight
+    CachedRepo --> Keys
+    PgRepo --> Kysely
+    Service --> Cursor
+    Service --> ReqCtx
+    Health --> Kysely
+    Health --> IORedis
+    Controller --> Errors
+    Service --> Errors
+```
+
+The decomposition honors the layering rule **presentation → application → infrastructure** — each arrow points "inwards" (towards data), never the other way. The `CachedResourceRepository` is a decorator: it implements the same `ResourceRepository` interface as `PostgresResourceRepository` and delegates to it on miss, so the service is unaware of whether caching is enabled.
+
+## Request Flows
+
+Sequence diagrams for each endpoint live as standalone files under [`docs/architecture/`](./docs/architecture/) so this overview stays scannable. Each file is a single Mermaid diagram plus a short "key points" section — pick the one you need.
+
+| Flow                              | File                                                              | When to read                                        |
+|-----------------------------------|-------------------------------------------------------------------|-----------------------------------------------------|
+| `GET /resources/:id` — cache HIT  | [docs/architecture/get-cache-hit.md](./docs/architecture/get-cache-hit.md)         | Understand the fast path                            |
+| `GET /resources/:id` — cache MISS | [docs/architecture/get-cache-miss.md](./docs/architecture/get-cache-miss.md)       | Understand the slow path + singleflight             |
+| `POST /resources`                 | [docs/architecture/post.md](./docs/architecture/post.md)                           | Understand write + list-cache invalidation          |
+| `PATCH /resources/:id`            | [docs/architecture/patch.md](./docs/architecture/patch.md)                         | Understand partial update + detail-cache `DEL`      |
+| `DELETE /resources/:id`           | [docs/architecture/delete.md](./docs/architecture/delete.md)                       | Understand hard delete + invalidation               |
+| Cache invalidation (version-counter trick) | [docs/architecture/cache-invalidation.md](./docs/architecture/cache-invalidation.md) | Understand why one `INCR` invalidates every list page |
+| `GET /healthz` (liveness + readiness) | [docs/architecture/health-check.md](./docs/architecture/health-check.md)       | Understand the parallel db/cache probes             |
+
+The high-level shape every request shares: client → middleware (request-id, x-cache) → controller (Zod validation) → service → cached-repository decorator → (Redis or Postgres) → response. The decorator is a pass-through wrapper around `PostgresResourceRepository` — the service is unaware of whether caching is enabled.
+
+## Data Model
+
+### Postgres `resources` table
+
+Defined by `migrations/0001_create_resources.ts` and typed in `src/infrastructure/db/schema.ts`. Five indexes support keyset pagination, the three filterable scalar columns, and tag containment.
+
+| Column       | Type            | Nullable | Default               | Indexed                              | Description |
+|--------------|-----------------|----------|-----------------------|--------------------------------------|-------------|
+| `id`         | `uuid`          | NO       | `gen_random_uuid()`   | PK + composite (with `created_at`)   | Server-issued resource id |
+| `name`       | `varchar(200)`  | NO       | —                     | —                                    | Human-readable label, ≤ 200 chars |
+| `type`       | `varchar(64)`   | NO       | —                     | `resources_type_idx`                 | Caller-defined classification (e.g. `widget`) |
+| `status`     | `varchar(32)`   | NO       | `'active'`            | `resources_status_idx`               | Lifecycle state |
+| `tags`       | `text[]`        | NO       | `ARRAY[]::text[]`     | `resources_tags_gin_idx` (GIN, `@>`) | Free-form labels, queried with `tag=` |
+| `owner_id`   | `uuid`          | YES      | —                     | `resources_owner_id_idx`             | Optional owner reference |
+| `metadata`   | `jsonb`         | NO       | `'{}'::jsonb`         | —                                    | Free-form blob, capped at 16 KB at the Zod layer |
+| `created_at` | `timestamptz`   | NO       | `now()`               | `resources_created_at_id_idx` (DESC, with `id`) | Insertion timestamp; drives keyset cursor |
+| `updated_at` | `timestamptz`   | NO       | `now()`               | —                                    | Updated by the service on every write |
+
+The composite index `(created_at DESC, id DESC)` is what makes keyset pagination cheap: `WHERE (created_at, id) < ($cursor_ts, $cursor_id)` is an index range scan, not a sort.
+
+### Redis key taxonomy
+
+Three key shapes, all prefixed with `resource:` so they can be flushed in one `SCAN MATCH 'resource:*'` if needed.
+
+| Key pattern                                | Example                                                  | Purpose                                       | TTL                                | Invalidation trigger |
+|--------------------------------------------|----------------------------------------------------------|-----------------------------------------------|------------------------------------|----------------------|
+| `resource:v1:id:{uuid}`                    | `resource:v1:id:7f3c…`                                   | Detail cache for `GET /resources/:id`         | `CACHE_DETAIL_TTL_SECONDS` (300 s) | `DEL` on `PATCH` / `DELETE` of that id; TTL self-heals on `POST` (no DEL needed) |
+| `resource:v1:list:{version}:{sha256-16}`   | `resource:v1:list:42:c9a1b2…`                            | List cache, keyed on filter tuple + version   | `CACHE_LIST_TTL_SECONDS` (60 s)    | Implicit on `INCR resource:list:version` (every list key embeds the old version, so they all become unreachable in one op) |
+| `resource:list:version`                    | `resource:list:version` → `42`                           | List version counter (no namespace bump field) | none (persistent)                  | `INCR` on every successful `POST` / `PATCH` / `DELETE` |
+
+The `{sha256-16}` is the first 32 hex chars (128 bits) of `sha256(canonical-json(filters))`, where `canonical-json` sorts object keys and array elements before serializing — so `?status=a&status=b` and `?status=b&status=a` resolve to the same cache key.
+
+The `v1` segment is a manual schema-version field. Bumping `v1` → `v2` in code makes every existing entry unreachable, useful when the serialized shape changes incompatibly.
+
+## Deployment
+
+The default deployment is a single-host Docker Compose stack. Three long-lived services (`api`, `postgres`, `redis`) on a private bridge network, plus an optional `k6` sidecar gated behind the `bench` profile for benchmark runs.
+
+```mermaid
+graph LR
+    subgraph host["Docker host"]
+        subgraph net["app-network (bridge)"]
+            API["api<br/>resources-api:3000"]
+            PG["postgres<br/>postgres:16-alpine:5432"]
+            R["redis<br/>redis:7-alpine:6379"]
+            K6["k6 (profile: bench)<br/>grafana/k6:latest"]
+        end
+        VolPg[("pg-data<br/>(named volume)")]
+        VolR[("redis-data<br/>(named volume)")]
+    end
+
+    Host3000["host :3000"] -.-> API
+    Host5432["host :5432"] -.-> PG
+
+    API -- "depends_on: healthy" --> PG
+    API -- "depends_on: healthy" --> R
+    K6 -- "depends_on: healthy" --> API
+
+    PG --- VolPg
+    R --- VolR
+```
+
+Healthchecks gate startup: `api` does not start until `postgres` and `redis` report healthy, and the `api` healthcheck (`GET /healthz?probe=liveness`) is what `k6` waits on. Only `api` (port 3000) and `postgres` (port 5432) are exposed to the host; Redis stays inside the network.
+
+## Failure Modes
+
+What happens when a dependency goes away. The service is designed to **degrade**, not fail wholesale, when Redis is unavailable. Postgres is harder to lose because the cache cannot satisfy writes — but reads still survive on warm cache entries until they expire.
+
+| Failed component       | Observable behavior                                                                                                                                       | Service status                                                              | Recovery action                                                                 |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|---------------------------------------------------------------------------------|
+| **Redis down**         | `GET /resources/:id` and `GET /resources` fall through to Postgres (`X-Cache: MISS` on every request). Writes commit normally; cache invalidation `INCR` / `DEL` fail silently and are logged at `warn` (TTL bounds the staleness window). | **Degraded — fully functional**. `GET /healthz` → `503` with `checks.cache: down`. | Restart Redis. Cache repopulates lazily on the next read. No manual flush needed because the version counter is `INCR`-ed by the next write (or starts at 1 again, which is harmless). |
+| **Postgres down**      | `GET /resources/:id` returns the cached value if `X-Cache: HIT`; on `MISS` the request fails with `500`. List requests fail unless the exact filter tuple + version is cached. All writes (`POST`/`PATCH`/`DELETE`) fail with `500`. | **Severely degraded — read-only on warm keys**. `GET /healthz` → `503` with `checks.db: down`. | Restart Postgres. Once healthy, writes resume. Stale cache entries naturally expire within `CACHE_DETAIL_TTL_SECONDS` / `CACHE_LIST_TTL_SECONDS`. |
+| **Both Postgres and Redis down** | All reads fail with `500` (no cache, no source of truth). All writes fail. Health endpoint reports both checks down. | **Down**. `GET /healthz` → `503` with both `checks.db: down` and `checks.cache: down`. The container's healthcheck (`GET /healthz?probe=liveness`) still returns `200` because liveness is the fast path that does not query dependencies — so Docker keeps the container running rather than restart-looping. | Restart both backends in any order. Postgres healthcheck unblocks `api` (the `depends_on: service_healthy` gate). |
+| **API process crash**  | Connections refused on port 3000. Docker Compose restart policy is `unless-stopped`, so the container is restarted automatically. In-flight requests are lost; clients retry. | **Down briefly** (single-replica deployment). | Automatic via Docker restart. Graceful shutdown drains in-flight requests within `SHUTDOWN_TIMEOUT_MS` on SIGTERM, so a planned restart loses no traffic. |
+| **Slow Postgres (no outage)** | Read latency rises on `MISS`; warm hits remain microseconds. Writes block on the connection pool; if the pool is exhausted, requests queue and may time out. | **Degraded — cache absorbs read load**. `/healthz` still passes if the slow query stays under the healthcheck timeout. | Diagnose (slow query log, connection pool metrics). Raise `DATABASE_POOL_SIZE` or front Postgres with PgBouncer in transaction mode. |
+
+The graceful-degradation behavior on Redis loss is documented in the `response-caching` capability spec and enforced by integration tests that kill the Redis container mid-test.
+
+## Production Topology
+
+A single-host Compose stack is the right shape for development, CI, and the take-home review. For production, the same topology fans out:
+
+```mermaid
+graph LR
+    LB["Load Balancer<br/>(nginx / ALB / k8s ingress)"]
+
+    subgraph api["API Tier (replicas ≥ 3)"]
+        A1["api-1"]
+        A2["api-2"]
+        A3["api-3"]
+    end
+
+    PgB["PgBouncer<br/>(transaction pooling)"]
+    PgPrimary[("Postgres primary")]
+    PgReplica[("Postgres read replica")]
+
+    RedisPrimary[("Redis primary")]
+    RedisReplica[("Redis replica<br/>(Sentinel-managed)")]
+
+    LB --> A1
+    LB --> A2
+    LB --> A3
+    A1 --> PgB
+    A2 --> PgB
+    A3 --> PgB
+    PgB --> PgPrimary
+    PgPrimary -. WAL streaming .-> PgReplica
+    A1 --> RedisPrimary
+    A2 --> RedisPrimary
+    A3 --> RedisPrimary
+    RedisPrimary -. replication .-> RedisReplica
+```
+
+The scale-out points map directly to the bottlenecks observed in [`Benchmark.md`](./Benchmark.md):
+
+- **Single API process** → horizontal replicas behind a load balancer. The service is stateless (all state lives in Postgres or Redis), so replicas need no coordination.
+- **Postgres connection pool** → PgBouncer in transaction mode in front of a primary, with each replica's `pg.Pool` capped at 5–10 connections. Read-heavy workloads can fan out to a read replica via a connection-string switch in `DATABASE_URL`.
+- **Redis single node** → Redis Sentinel for HA failover, or Redis Cluster for sharding once a single primary saturates. Cache-aside fits both transparently.
+- **Co-located load generator** (relevant only to local benchmarks) → run k6 on a separate host or use k6 Cloud / distributed k6.
+
+The `Benchmark.md` "Co-location penalty" section quantifies how much of the laptop result is artifact-of-environment vs real ceiling. Production numbers will be substantially higher on isolated hardware.
 
 ## Directory Layout
 

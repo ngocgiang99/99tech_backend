@@ -306,7 +306,7 @@ earns its place on latency more than on raw RPS on a co-located laptop.
 
 ### Docker Compose profile (no local k6 install)
 
-For reviewers without `mise install`, the `bench` compose profile runs k6
+If you don't have k6 installed locally, the `bench` compose profile runs k6
 inside a container against the API service on the same compose network:
 
 ```bash
@@ -333,28 +333,15 @@ pnpm bench:seed         # re-seed if you want to re-run
 
 ## Architecture
 
-The `src/` tree is organized into layered directories that make the dependency direction visible at a glance:
+The Resources API is an Express 5 + TypeScript service backed by Postgres (Kysely) and Redis (ioredis). Five design decisions characterize it:
 
-```
-src/
-  config/                     # Zod-validated env config
-  shared/                     # Cross-cutting primitives (errors, logger, health, shutdown)
-  infrastructure/             # Driver-level primitives (shared by all features)
-    db/                       # Kysely + pg.Pool + schema types
-    cache/                    # ioredis client + singleflight
-  http/                       # Express wiring + non-feature routes
-  middleware/                 # request-id, error-handler, x-cache
-  modules/resources/          # Feature module (presentation / application / infrastructure)
-    presentation/             # router, controller, mapper
-    application/              # service, cursor, request-context
-    infrastructure/           # repository, cached-repository, cache-keys
-    schema.ts                 # Zod schemas + inferred DTO types
-    index.ts                  # createResourcesModule factory
-  app.ts                      # createApp(deps) — DI entry point
-  index.ts                    # Process entry point
-```
+- **Layered decomposition.** Each feature module splits into `presentation` → `application` → `infrastructure`, with terminal cross-cutting layers (`src/shared/`, `src/infrastructure/`) holding driver-level primitives. Dependency direction is **lint-enforced** by ESLint `no-restricted-imports` — a violation is a build error, not a review comment.
+- **Cache-aside with version-counter invalidation.** `GET /resources/:id` and `GET /resources` are wrapped by a `CachedResourceRepository` decorator over the Postgres repo. Detail entries use straightforward TTL + key DEL on write. List entries embed a monotonic `resource:list:version` counter in their key — every successful write does one Redis `INCR`, atomically invalidating every cached list page in one op (no `KEYS *` scanning).
+- **Graceful degradation when Redis is unavailable.** Every Redis call is wrapped in `try`/`catch`. On failure the cache layer becomes a pass-through to Postgres, the request still succeeds, and the outage surfaces in `/healthz` rather than as a 500. Writes commit normally; cache invalidation failures are logged at `warn` and TTLs bound the staleness window.
+- **Keyset (cursor) pagination, not offset.** `GET /resources` uses a composite `(created_at DESC, id DESC)` index with an opaque `nextCursor` token, so list latency stays flat regardless of how deep the caller paginates.
+- **k6 benchmark suite as the performance contract.** Eight reusable k6 scenarios under `benchmarks/` cover smoke / read-load / write-load / mixed / spike / stress / cache-cold / cache-warm. The cache-cold vs cache-warm comparison is the empirical signal for whether the Redis layer earns its complexity cost. Methodology and laptop results live in [`Benchmark.md`](./Benchmark.md).
 
-Dependencies flow in one direction inside each module (`presentation → application → infrastructure`), enforced by ESLint `no-restricted-imports` rules. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full layering rules, dependency direction, and the decisions behind what this project explicitly does not do.
+For the diagrams, data model, deployment topology, failure modes table, and the full layering rules, see → [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ---
 

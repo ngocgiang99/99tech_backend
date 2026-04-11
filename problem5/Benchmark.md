@@ -99,7 +99,7 @@ telemetry is emitted), full 5-minute scenarios unless noted.
 ¹ smoke hits `/healthz` + `/resources/:id` without recording `X-Cache` counters.
 ² p99 crosses the 500 ms SLO at sustained 10k-target load on this laptop. See §Interpretation.
 ³ mixed scenario records `X-Cache` counters but the run executed against `NODE_ENV=production`, where the API suppresses the header (see §response-caching). Cache is still active — the sub-millisecond p50 confirms most reads served from Redis — but the hit-rate counter is unobservable.
-⁴ spike / stress scripts ship as reusable code (run with `pnpm bench:spike` / `pnpm bench:stress`). Skipped from this canonical run to keep the report focused on the brief's primary 95/5 workload and the cache delta. Reviewers can run them locally.
+⁴ spike / stress scripts ship as reusable code (run with `pnpm bench:spike` / `pnpm bench:stress`). Skipped from this canonical run to keep the report focused on the brief's primary 95/5 workload and the cache delta. Run them locally if you want the numbers.
 
 ### Reading the primary workload rows
 
