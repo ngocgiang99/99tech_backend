@@ -5,6 +5,9 @@
     "test",
     "dist",
     "**/*spec.ts",
-    "kysely.config.ts"
+    "**/*.test.ts",
+    "kysely.config.ts",
+    "jest.config.ts",
+    "tsconfig.test.json"
   ]
 }
