@@ -47,9 +47,9 @@ When the application starts, the configuration loader SHALL parse `process.env` 
 - **AND** no NestJS provider has been instantiated by the time of exit
 
 #### Scenario: Multiple missing env vars all reported in one boot attempt
-- **WHEN** the app starts with both `DATABASE_URL` and `JWKS_URL` unset
+- **WHEN** the app starts with both `DATABASE_URL` and `INTERNAL_JWT_SECRET` unset
 - **THEN** the process exits with a non-zero exit code
-- **AND** the stderr message lists BOTH `DATABASE_URL` and `JWKS_URL` as failing keys
+- **AND** the stderr message lists BOTH `DATABASE_URL` and `INTERNAL_JWT_SECRET` as failing keys
 - **AND** the developer does not need to fix one and re-run to discover the next
 
 #### Scenario: Malformed value (wrong type) is rejected with a clear message
@@ -59,12 +59,13 @@ When the application starts, the configuration loader SHALL parse `process.env` 
 
 ### Requirement: Schema covers every variable from README §13.3
 
-The zod schema in `src/config/schema.ts` SHALL define a key for every environment variable documented in `problem6/README.md §13.3`, in the same logical order (Runtime → Datastores → NATS JetStream → Auth → Rate Limiting → Observability), with validation rules appropriate to each variable's documented format and constraints.
+The zod schema in `src/config/schema.ts` SHALL define a key for every environment variable documented in `problem6/README.md §13.3`, in the same logical order (Runtime → Datastores → NATS JetStream → Auth → Rate Limiting → Observability), with validation rules appropriate to each variable's documented format and constraints. The README §13.3 table SHALL be kept in sync as env vars are added or removed.
 
 #### Scenario: Every README §13.3 variable has a schema entry
 - **WHEN** the keys of `EnvSchema` are compared against the env-var rows in `README.md §13.3`
-- **THEN** every documented variable name (`NODE_ENV`, `PORT`, `DATABASE_URL`, `REDIS_URL`, `NATS_URL`, `NATS_STREAM_NAME`, `NATS_STREAM_MAX_AGE_SECONDS`, `NATS_STREAM_MAX_MSGS`, `NATS_STREAM_MAX_BYTES`, `NATS_STREAM_REPLICAS`, `NATS_DEDUP_WINDOW_SECONDS`, `JWKS_URL`, `JWT_ISSUER`, `JWT_AUDIENCE`, `ACTION_TOKEN_SECRET`, `ACTION_TOKEN_TTL_SECONDS`, `RATE_LIMIT_PER_SEC`, `MAX_SSE_CONN_PER_INSTANCE`, `LOG_LEVEL`, `OTEL_EXPORTER_OTLP_ENDPOINT`) appears as a schema key
+- **THEN** every documented variable name (`NODE_ENV`, `PORT`, `DATABASE_URL`, `REDIS_URL`, `NATS_URL`, `NATS_STREAM_NAME`, `NATS_STREAM_MAX_AGE_SECONDS`, `NATS_STREAM_MAX_MSGS`, `NATS_STREAM_MAX_BYTES`, `NATS_STREAM_REPLICAS`, `NATS_DEDUP_WINDOW_SECONDS`, `INTERNAL_JWT_SECRET`, `ACTION_TOKEN_SECRET`, `ACTION_TOKEN_SECRET_PREV`, `ACTION_TOKEN_TTL_SECONDS`, `RATE_LIMIT_PER_SEC`, `MAX_SSE_CONN_PER_INSTANCE`, `LEADERBOARD_REBUILD_TOP_N`, `LOG_LEVEL`, `OTEL_EXPORTER_OTLP_ENDPOINT`) appears as a schema key
 - **AND** no schema key exists that is not in the README
+- **AND** `JWKS_URL`, `JWT_ISSUER`, `JWT_AUDIENCE` are NOT present in either the schema or the README
 
 #### Scenario: Optional variables are marked optional in the schema
 - **WHEN** `OTEL_EXPORTER_OTLP_ENDPOINT` is not set in the environment
@@ -106,3 +107,33 @@ The `EnvSchema` SHALL include an optional `ACTION_TOKEN_SECRET_PREV: z.string().
 - **WHEN** the schema parses
 - **THEN** the parse fails
 - **AND** the boot exits non-zero with an error naming `ACTION_TOKEN_SECRET_PREV` and the min-length constraint
+
+### Requirement: INTERNAL_JWT_SECRET required (≥32 chars)
+
+The `EnvSchema` SHALL include `INTERNAL_JWT_SECRET: z.string().min(32)` as a required field. When the secret is unset, boot SHALL fail-fast with a non-zero exit and an error message naming the missing key. When the secret is shorter than 32 characters, boot SHALL fail-fast with a min-length error. This is the sole secret used by `JwtGuard` to verify HS256 signatures on inbound JWTs (replaces the prior JWKS-based RS256 verification).
+
+#### Scenario: Missing INTERNAL_JWT_SECRET crashes boot
+- **WHEN** the app starts with `INTERNAL_JWT_SECRET` unset
+- **THEN** the process exits with a non-zero exit code (1)
+- **AND** stderr names `INTERNAL_JWT_SECRET` and the zod issue ("Required")
+- **AND** no NestJS provider has been instantiated
+
+#### Scenario: INTERNAL_JWT_SECRET shorter than 32 chars is rejected
+- **WHEN** the app starts with `INTERNAL_JWT_SECRET=short`
+- **THEN** the process exits with a non-zero exit code
+- **AND** stderr names `INTERNAL_JWT_SECRET` and the min-length constraint
+
+#### Scenario: Valid INTERNAL_JWT_SECRET parses successfully
+- **GIVEN** `INTERNAL_JWT_SECRET=<32+ char string>`
+- **WHEN** the schema parses
+- **THEN** `configService.get('INTERNAL_JWT_SECRET')` returns the string
+- **AND** the type is `string` (not `string | undefined`)
+
+### Requirement: Pino redaction config redacts INTERNAL_JWT_SECRET
+
+The Pino logger configuration in `src/shared/logger/pino-logger.factory.ts` SHALL include `INTERNAL_JWT_SECRET` in its redact paths, alongside the existing `ACTION_TOKEN_SECRET` and `ACTION_TOKEN_SECRET_PREV` entries. This ensures the secret can never accidentally appear in log lines if a developer logs `config.get('INTERNAL_JWT_SECRET')` or includes the config object in a log call.
+
+#### Scenario: Logger redacts INTERNAL_JWT_SECRET if accidentally referenced
+- **GIVEN** code that accidentally tries to log `config.get('INTERNAL_JWT_SECRET')`
+- **WHEN** the log line is built
+- **THEN** Pino's redaction config strips the value before serialization

@@ -549,10 +549,16 @@ Kafka was considered and rejected: its operational footprint (ZooKeeper/KRaft, b
 
 ### 9.2 JWT (User Identity)
 
-- Issued by the Identity service; this module only **verifies** — it never mints user JWTs.
-- Asymmetric (RS256 or ES256). Public key fetched from JWKS at `JWKS_URL`, cached in-memory with a 1-hour TTL.
-- Required claims: `sub` (userId), `iat`, `exp`, `iss`, `aud = "scoreboard"`.
+- problem6 today is a **self-contained auth boundary** — it mints and verifies its own JWTs using HS256 against `INTERNAL_JWT_SECRET`. No external IdP or JWKS endpoint is required.
+- Symmetric (HS256). Verified directly with `INTERNAL_JWT_SECRET` — no HTTP fetch, no key cache.
+- Required claims: `sub` (userId), `iat`, `exp`. `iss` and `aud` claims are **not** checked (they were meaningful only with an external IdP; the shared secret IS the audience binding).
 - Bearer header only; no cookies for this API.
+- Forward-compatible: if an external IdP is adopted later, a separate `JwksGuard` can be introduced alongside this guard — this change does not need to be reverted.
+
+> **Dev JWT one-liner** (sign a short-lived JWT for local testing):
+> ```bash
+> node -e 'import("jose").then(async j => { console.log(await new j.SignJWT({sub:"00000000-0000-0000-0000-000000000005"}).setProtectedHeader({alg:"HS256"}).setExpirationTime("5m").setIssuedAt().sign(new TextEncoder().encode(process.env.INTERNAL_JWT_SECRET))) })'
+> ```
 
 ### 9.3 Action Token (Action Authorization)
 
@@ -886,9 +892,7 @@ Provide a `.env` file at `problem6/.env`. All variables are required unless mark
 | `NATS_STREAM_MAX_BYTES` | `1073741824` (1 GB) | Stream byte cap |
 | `NATS_STREAM_REPLICAS` | `1` (local) / `3` (prod) | JetStream replica count — local dev is single-node |
 | `NATS_DEDUP_WINDOW_SECONDS` | `120` | `Nats-Msg-Id` dedup window |
-| `JWKS_URL` | `https://id.example.com/.well-known/jwks.json` | JWT public keys |
-| `JWT_ISSUER` | `https://id.example.com/` | expected `iss` claim |
-| `JWT_AUDIENCE` | `scoreboard` | expected `aud` claim |
+| `INTERNAL_JWT_SECRET` | *(32+ random bytes)* | 32+ random bytes used to HS256-sign and verify internal JWTs — generate with `openssl rand -hex 32` |
 | `ACTION_TOKEN_SECRET` | *(32+ random bytes)* | HMAC secret for action tokens |
 | `ACTION_TOKEN_TTL_SECONDS` | `300` | action token lifetime |
 | `RATE_LIMIT_PER_SEC` | `10` | per-user write budget |

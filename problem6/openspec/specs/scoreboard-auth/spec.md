@@ -2,37 +2,16 @@
 
 ## Purpose
 
-JWT verification (JWKS-based) and HMAC action-token issuer/verifier for the scoreboard module. Owns the auth guards (`JwtGuard`, `ActionTokenGuard`), the JWKS cache, the action-token signer/verifier classes, and the `actions:issue-token` endpoint. Establishes the contract that every protected endpoint runs `JwtGuard` first.
+JWT verification (HS256-based, internal shared secret) and HMAC action-token issuer/verifier for the scoreboard module. Owns the auth guards (`JwtGuard`, `ActionTokenGuard`), the action-token signer/verifier classes, and the `actions:issue-token` endpoint. Establishes the contract that every protected endpoint runs `JwtGuard` first. There is no external identity provider in front of problem6; both inbound JWTs and action tokens are minted and verified within the same trust boundary.
 
 ## Requirements
 
-### Requirement: JWKS cache fetches and stores public keys for 1 hour
-
-The `JwksCache` service SHALL fetch JWT verification keys from `JWKS_URL` (configured via `ConfigService`) and cache them in-memory for 1 hour. On cache miss or TTL expiry, the cache SHALL re-fetch transparently.
-
-#### Scenario: First verify call fetches the JWKS
-- **GIVEN** a freshly booted `JwksCache` with no cached keys
-- **WHEN** `jwksCache.verify(token)` is called for the first time
-- **THEN** the cache fetches `GET <JWKS_URL>` and parses the response
-- **AND** the parsed JWK is stored in the in-memory cache keyed by the token's `kid` header
-
-#### Scenario: Subsequent verify calls hit the cache
-- **GIVEN** a `JwksCache` with a cached JWK for a given `kid`
-- **WHEN** another `jwksCache.verify(token)` is called within 1 hour with the same `kid`
-- **THEN** no HTTP request is made to `JWKS_URL`
-- **AND** verification proceeds against the cached key
-
-#### Scenario: Cache refreshes after TTL expires
-- **GIVEN** a `JwksCache` whose entry was inserted more than 1 hour ago
-- **WHEN** the next `jwksCache.verify(token)` is called
-- **THEN** the cache re-fetches `<JWKS_URL>` and replaces the stored entry
-
 ### Requirement: JwtGuard enforces all required JWT claims
 
-`JwtGuard.canActivate(context)` SHALL verify the bearer token has a valid signature, `iss === JWT_ISSUER`, `aud === JWT_AUDIENCE`, `exp > now`, and an algorithm in `[RS256, ES256]`. On any failure, the guard SHALL throw or return false to produce a `401 UNAUTHENTICATED` response. On success, the guard SHALL set `request.userId = payload.sub`.
+`JwtGuard.canActivate(context)` SHALL verify the bearer token has a valid HS256 signature against `INTERNAL_JWT_SECRET`, `exp > now`, and an algorithm exactly equal to `HS256`. On any failure, the guard SHALL throw or return false to produce a `401 UNAUTHENTICATED` response. On success, the guard SHALL set `request.userId = payload.sub`. The guard SHALL NOT check `iss` or `aud` claims (those checks were meaningful only when an external IdP was the issuer; in a self-contained auth boundary the HMAC signature is the sole authenticity proof).
 
-#### Scenario: Valid token allows the request and sets userId
-- **GIVEN** a request with `Authorization: Bearer <valid-RS256-jwt>` whose `iss`, `aud`, `exp` all match the configuration
+#### Scenario: Valid HS256 token allows the request and sets userId
+- **GIVEN** a request with `Authorization: Bearer <valid-HS256-jwt-signed-with-INTERNAL_JWT_SECRET>` whose `exp` is in the future
 - **WHEN** `JwtGuard` runs
 - **THEN** the guard returns true
 - **AND** `request.userId` equals the JWT `sub` claim
@@ -43,27 +22,39 @@ The `JwksCache` service SHALL fetch JWT verification keys from `JWKS_URL` (confi
 - **THEN** the response is `401 UNAUTHENTICATED`
 - **AND** no downstream guard runs
 
-#### Scenario: Token with wrong audience is rejected
-- **GIVEN** a syntactically valid JWT whose `aud` claim is `"other-service"` (not `scoreboard`)
+#### Scenario: Token signed with a different secret is rejected
+- **GIVEN** a syntactically valid HS256 JWT signed with the wrong secret
 - **WHEN** `JwtGuard` runs
 - **THEN** the response is `401 UNAUTHENTICATED`
 
 #### Scenario: Expired token is rejected
-- **GIVEN** a valid JWT whose `exp` is in the past
+- **GIVEN** a valid HS256 JWT whose `exp` is in the past
 - **WHEN** `JwtGuard` runs
 - **THEN** the response is `401 UNAUTHENTICATED`
 
-#### Scenario: Token with alg=none is rejected at parse time
+#### Scenario: Token with alg=none is rejected
 - **GIVEN** a token whose header declares `alg: "none"`
 - **WHEN** `JwtGuard` runs
-- **THEN** the guard rejects BEFORE any signature verification (the parse step rejects unsigned tokens)
-- **AND** the response is `401 UNAUTHENTICATED`
+- **THEN** the guard rejects with `401 UNAUTHENTICATED`
+- **AND** signature verification is never attempted
+
+#### Scenario: Token with alg=RS256 is rejected (algorithm allowlist)
+- **GIVEN** a token whose header declares `alg: "RS256"` (e.g. an attacker attempting algorithm confusion)
+- **WHEN** `JwtGuard` runs
+- **THEN** the guard rejects with `401 UNAUTHENTICATED`
+- **AND** the rejection happens because `HS256` is the only allowed algorithm in the verify call
 
 #### Scenario: Tampered signature is rejected
-- **GIVEN** a JWT whose payload has been mutated after signing
+- **GIVEN** an HS256 JWT whose payload has been mutated after signing
 - **WHEN** `JwtGuard` runs
 - **THEN** signature verification fails
 - **AND** the response is `401 UNAUTHENTICATED`
+
+#### Scenario: iss and aud claims are ignored
+- **GIVEN** a valid HS256 JWT with `iss = "anything"` and `aud = "anything"` (or no `iss`/`aud` claims at all)
+- **WHEN** `JwtGuard` runs
+- **THEN** the guard does NOT check `iss` or `aud`
+- **AND** the guard returns true (assuming all other checks pass)
 
 ### Requirement: Action token issuer endpoint mints HMAC-bound capability tokens
 

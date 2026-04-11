@@ -21,9 +21,7 @@ export const EnvSchema = z.object({
   NATS_STREAM_REPLICAS: z.coerce.number().int().positive().default(1),
   NATS_DEDUP_WINDOW_SECONDS: z.coerce.number().int().positive().default(120),
 
-  JWKS_URL: z.string().url(),
-  JWT_ISSUER: z.string().min(1),
-  JWT_AUDIENCE: z.string().min(1),
+  INTERNAL_JWT_SECRET: z.string().min(32),
   ACTION_TOKEN_SECRET: z.string().min(32),
   ACTION_TOKEN_SECRET_PREV: z.string().min(32).optional(),
   ACTION_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(300),

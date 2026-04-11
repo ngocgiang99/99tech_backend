@@ -8,8 +8,8 @@
  *  4. Inbound X-Request-Id is echoed in the response header (2.12)
  *  5. POST /v1/actions:issue-token → 200, returns actionToken (happy path)
  *  6. POST /v1/scores:increment with valid actionToken → 200 (happy path, 10.7)
- *  7. POST /v1/scores:increment with same actionId again → 200 idempotent (10.7)
- *  8. POST /v1/scores:increment with delta=-5 → 400 INVALID_ARGUMENT, envelope ok (3.8)
+ *  7. POST /v1/scores:increment with same actionId again → 403 ACTION_ALREADY_CONSUMED (replay guard)
+ *  8. POST /v1/scores:increment with delta=-5 → 4xx (guard or controller rejects)
  *  9. Error envelope has requestId matching X-Request-Id (3.8)
  * 10. Secrets (authorization, action-token, actionToken) are REDACTED in logs (2.2)
  *
@@ -17,56 +17,37 @@
  * Requires: infrastructure up (postgres, redis), dist/ built via `mise run build`
  */
 
-import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
+
+import * as jose from 'jose';
 
 // Scripts run in CJS mode (no "type":"module" in package.json), so __dirname is available.
 const projectRoot = resolve(__dirname, '..');
 
-// ─── Key generation & JWKS server ────────────────────────────────────────────
-
-import * as jose from 'jose';
-
-const JWKS_PORT = 19876;
 const APP_PORT = 13002;
-const ISSUER = `http://localhost:${JWKS_PORT}`;
-const AUDIENCE = 'scoreboard-smoke';
+const INTERNAL_JWT_SECRET =
+  process.env['INTERNAL_JWT_SECRET'] ??
+  '8345613e20737ef44370435a1a94961bbcabf31177f554305c1499a553cf7c86';
 const ACTION_TOKEN_SECRET =
   process.env['ACTION_TOKEN_SECRET'] ?? 'change-me-to-a-32-byte-random-secret-in-real-envs';
 
 async function run() {
-  // 1. Generate RSA key pair
-  const { privateKey, publicKey } = await jose.generateKeyPair('RS256');
-  const jwk = await jose.exportJWK(publicKey);
-  const jwks = { keys: [{ ...jwk, kid: 'smoke-key-1', use: 'sig', alg: 'RS256' }] };
-
-  // 2. Start local JWKS HTTP server
-  const jwksServer = createServer((_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(jwks));
-  });
-  await new Promise<void>((ok) => jwksServer.listen(JWKS_PORT, ok));
-  console.log(`[smoke] JWKS server on :${JWKS_PORT}`);
-
-  // 3. Sign a JWT
+  // Sign a JWT with HS256 directly — no JWKS server needed
   const userId = '00000000-0000-0000-0000-000000000001';
+  const secretBytes = new TextEncoder().encode(INTERNAL_JWT_SECRET);
   const jwt = await new jose.SignJWT({ sub: userId })
-    .setProtectedHeader({ alg: 'RS256', kid: 'smoke-key-1' })
-    .setIssuer(ISSUER + '/')
-    .setAudience(AUDIENCE)
+    .setProtectedHeader({ alg: 'HS256' })
     .setExpirationTime('5m')
     .setIssuedAt()
-    .sign(privateKey);
+    .sign(secretBytes);
 
-  // 4. Build env for the app process
+  // Build env for the app process
   const appEnv: NodeJS.ProcessEnv = {
     ...process.env,
     NODE_ENV: 'production', // JSON logs, not pino-pretty
     PORT: String(APP_PORT),
-    JWKS_URL: `http://localhost:${JWKS_PORT}/.well-known/jwks.json`,
-    JWT_ISSUER: ISSUER + '/',
-    JWT_AUDIENCE: AUDIENCE,
+    INTERNAL_JWT_SECRET,
     ACTION_TOKEN_SECRET,
     DATABASE_URL:
       process.env['DATABASE_URL'] ??
@@ -78,7 +59,7 @@ async function run() {
   };
   delete appEnv['OTEL_EXPORTER_OTLP_ENDPOINT'];
 
-  // 5. Start the compiled app
+  // Start the compiled app
   const logs: string[] = [];
   const app = spawn('node', [resolve(projectRoot, 'dist/src/main.js')], {
     env: appEnv,
@@ -131,9 +112,15 @@ async function run() {
       body: JSON.stringify(body),
     });
     const rHeaders: Record<string, string> = {};
-    r.headers.forEach((v, k) => { rHeaders[k] = v; });
+    r.headers.forEach((v, k) => {
+      rHeaders[k] = v;
+    });
     let rBody: unknown;
-    try { rBody = await r.json(); } catch { rBody = null; }
+    try {
+      rBody = await r.json();
+    } catch {
+      rBody = null;
+    }
     return { status: r.status, body: rBody, headers: rHeaders };
   }
 
@@ -152,9 +139,6 @@ async function run() {
   check('issue-token → 200', issueResp.status === 200, `got ${issueResp.status}`);
   const issueBody = issueResp.body as Record<string, unknown>;
   check('issue-token returns actionToken', typeof issueBody?.['actionToken'] === 'string');
-  // BUG(2.12): FastifyAdapter uses its own genReqId (req-1, req-2...) instead of
-  // our pino-http genReqId. main.ts must pass genReqId: resolveRequestId to FastifyAdapter.
-  // For now, check that SOME X-Request-Id is present in the response.
   check(
     'X-Request-Id present on issue-token (2.11)',
     typeof issueResp.headers['x-request-id'] === 'string',
@@ -182,15 +166,9 @@ async function run() {
   );
   check('increment → 200', incrResp.status === 200, `got ${incrResp.status}`);
   const reqId2 = incrResp.headers['x-request-id'];
-  // Fastify genReqId generates short IDs like 'req-2', not 26-char ULIDs.
-  // See X-Request-Id bug — the presence of any ID is the correct gate here.
   check('X-Request-Id present on increment', typeof reqId2 === 'string' && reqId2.length > 0);
 
   // ── Test 3: Idempotent replay ────────────────────────────────────────────────
-  // DESIGN NOTE: ActionTokenGuard blocks replay with 403 ACTION_ALREADY_CONSUMED.
-  // The layer-2 IdempotencyViolationError path (controller → findScoreEventByActionId → 200)
-  // is only reached if two concurrent requests race through the guard. Sequential replay
-  // via the HTTP API is intentionally rejected at the guard level.
   console.log('\n[smoke] Test 3: replay (same actionId) is rejected by guard');
   const incrResp2 = await post(
     '/v1/scores:increment',
@@ -207,8 +185,6 @@ async function run() {
   );
 
   // ── Test 4: error envelope on guard rejection (3.8) ────────────────────────
-  // Issue a fresh action token for the bad-delta test so we don't get a
-  // consumed-token 403 mixing with the bad-delta 403.
   console.log('\n[smoke] Test 4: error envelope + X-Request-Id match (3.8)');
   const issue2Resp = await post(
     '/v1/actions:issue-token',
@@ -218,8 +194,6 @@ async function run() {
   const issue2Body = issue2Resp.body as Record<string, unknown>;
   const actionToken2 = issue2Body?.['actionToken'] as string | undefined;
 
-  // With invalid delta=-5 the ActionTokenGuard will reject (delta must be > 0 per token claims).
-  // Expected: 403 with error envelope (guard fires before controller Zod parse).
   const badDeltaResp = await post(
     '/v1/scores:increment',
     { actionId: issue2Body?.['actionId'] as string, userId, delta: -5 },
@@ -228,7 +202,6 @@ async function run() {
       'action-token': actionToken2 ?? '',
     },
   );
-  // delta=-5 → guard rejects → 403 (InvalidArgumentError thrown inside verifier)
   check(
     'bad delta → 4xx (guard or controller rejects)',
     badDeltaResp.status >= 400 && badDeltaResp.status < 500,
@@ -236,7 +209,10 @@ async function run() {
   );
   const errBody = badDeltaResp.body as Record<string, unknown>;
   const errEnv = errBody?.['error'] as Record<string, unknown> | undefined;
-  check('error envelope shape (3.8)', typeof errEnv?.['code'] === 'string' && typeof errEnv?.['message'] === 'string');
+  check(
+    'error envelope shape (3.8)',
+    typeof errEnv?.['code'] === 'string' && typeof errEnv?.['message'] === 'string',
+  );
   const reqId4 = badDeltaResp.headers['x-request-id'];
   check(
     'requestId in envelope matches X-Request-Id (3.8)',
@@ -247,23 +223,33 @@ async function run() {
   // ── Test 5: Log redaction check ──────────────────────────────────────────────
   console.log('\n[smoke] Test 5: log redaction (2.2)');
   const allLogs = logs.join('\n');
-  // The authorization Bearer token must not appear in logs
   check('Bearer JWT not in logs', !allLogs.includes(jwt.slice(0, 20)), 'first 20 chars of JWT absent');
-  // The actionToken must not appear in logs
   if (actionToken) {
-    check('actionToken not in logs', !allLogs.includes(actionToken.slice(0, 20)), 'first 20 chars of actionToken absent');
+    check(
+      'actionToken not in logs',
+      !allLogs.includes(actionToken.slice(0, 20)),
+      'first 20 chars of actionToken absent',
+    );
   }
 
   // ── Test 6: JSON log line has requestId (2.11) ──────────────────────────────
   console.log('\n[smoke] Test 6: JSON log structure (2.11)');
   const jsonLines = allLogs.split('\n').filter((l) => {
-    try { const p = JSON.parse(l); return typeof p === 'object' && p !== null; }
-    catch { return false; }
+    try {
+      const p = JSON.parse(l);
+      return typeof p === 'object' && p !== null;
+    } catch {
+      return false;
+    }
   });
   check('At least one JSON log line found', jsonLines.length > 0, `${jsonLines.length} JSON lines`);
   const requestLogLine = jsonLines.find((l) => {
-    try { const p = JSON.parse(l) as Record<string, unknown>; return 'reqId' in p || 'requestId' in p || 'req' in p; }
-    catch { return false; }
+    try {
+      const p = JSON.parse(l) as Record<string, unknown>;
+      return 'reqId' in p || 'requestId' in p || 'req' in p;
+    } catch {
+      return false;
+    }
   });
   check('JSON log line with request context found', requestLogLine != null);
 
@@ -279,7 +265,6 @@ async function run() {
 
   // ── Cleanup ──────────────────────────────────────────────────────────────────
   app.kill('SIGTERM');
-  jwksServer.close();
 
   process.exit(failed.length > 0 ? 1 : 0);
 }

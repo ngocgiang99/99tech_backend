@@ -14,9 +14,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     NATS_STREAM_MAX_BYTES: 1073741824,
     NATS_STREAM_REPLICAS: 1,
     NATS_DEDUP_WINDOW_SECONDS: 120,
-    JWKS_URL: 'https://example.com/.well-known/jwks.json',
-    JWT_ISSUER: 'https://example.com',
-    JWT_AUDIENCE: 'scoreboard-api',
+    INTERNAL_JWT_SECRET: 'a-32-byte-internal-jwt-secret-ok!',
     ACTION_TOKEN_SECRET: 'a-32-byte-secret-for-testing-ok!!',
     ACTION_TOKEN_TTL_SECONDS: 300,
     RATE_LIMIT_PER_SEC: 10,
@@ -32,13 +30,17 @@ describe('ConfigService', () => {
     const cfg = new ConfigService(makeConfig());
     expect(cfg.get('NODE_ENV')).toBe('test');
     expect(cfg.get('PORT')).toBe(3000);
-    expect(cfg.get('DATABASE_URL')).toBe('postgresql://user:pass@localhost:5432/testdb');
+    expect(cfg.get('DATABASE_URL')).toBe(
+      'postgresql://user:pass@localhost:5432/testdb',
+    );
     expect(cfg.get('REDIS_URL')).toBe('redis://localhost:6379');
     expect(cfg.get('NATS_URL')).toBe('nats://localhost:4222');
-    expect(cfg.get('JWKS_URL')).toBe('https://example.com/.well-known/jwks.json');
-    expect(cfg.get('JWT_ISSUER')).toBe('https://example.com');
-    expect(cfg.get('JWT_AUDIENCE')).toBe('scoreboard-api');
-    expect(cfg.get('ACTION_TOKEN_SECRET')).toBe('a-32-byte-secret-for-testing-ok!!');
+    expect(cfg.get('INTERNAL_JWT_SECRET')).toBe(
+      'a-32-byte-internal-jwt-secret-ok!',
+    );
+    expect(cfg.get('ACTION_TOKEN_SECRET')).toBe(
+      'a-32-byte-secret-for-testing-ok!!',
+    );
     expect(cfg.get('ACTION_TOKEN_TTL_SECONDS')).toBe(300);
     expect(cfg.get('RATE_LIMIT_PER_SEC')).toBe(10);
     expect(cfg.get('LOG_LEVEL')).toBe('info');

@@ -5,7 +5,9 @@ import {
 
 // Helper: cast the union return type of buildPinoLoggerOptions to a plain record
 // so individual option fields are accessible in tests without pulling in pino-http types.
-function asOptions(raw: ReturnType<typeof buildPinoLoggerOptions>): Record<string, unknown> {
+function asOptions(
+  raw: ReturnType<typeof buildPinoLoggerOptions>,
+): Record<string, unknown> {
   return raw as Record<string, unknown>;
 }
 
@@ -93,7 +95,9 @@ describe('buildPinoLoggerOptions', () => {
     const config = makeConfig({ NODE_ENV: 'development' });
     const opts = asOptions(buildPinoLoggerOptions(config as never));
     expect(opts.transport).toBeDefined();
-    expect((opts.transport as Record<string, unknown>).target).toBe('pino-pretty');
+    expect((opts.transport as Record<string, unknown>).target).toBe(
+      'pino-pretty',
+    );
   });
 
   it('includes redact paths for sensitive headers', () => {
@@ -103,6 +107,13 @@ describe('buildPinoLoggerOptions', () => {
     expect(redact.paths).toContain('req.headers.authorization');
     expect(redact.paths).toContain('req.headers["action-token"]');
     expect(redact.remove).toBe(true);
+  });
+
+  it('includes *.INTERNAL_JWT_SECRET in redact paths', () => {
+    const config = makeConfig();
+    const opts = asOptions(buildPinoLoggerOptions(config as never));
+    const redact = opts.redact as { paths: string[]; remove: boolean };
+    expect(redact.paths).toContain('*.INTERNAL_JWT_SECRET');
   });
 
   it('genReqId returns a valid request ID from x-request-id header', () => {
@@ -115,7 +126,10 @@ describe('buildPinoLoggerOptions', () => {
     const id = genReqId(req, reply);
 
     expect(id).toBe('ABCDEFGHIJKLMNOP');
-    expect(reply.header).toHaveBeenCalledWith('X-Request-Id', 'ABCDEFGHIJKLMNOP');
+    expect(reply.header).toHaveBeenCalledWith(
+      'X-Request-Id',
+      'ABCDEFGHIJKLMNOP',
+    );
   });
 
   it('genReqId generates a ULID when no x-request-id header is present', () => {
@@ -139,6 +153,9 @@ describe('buildPinoLoggerOptions', () => {
     const reply = { setHeader: jest.fn() };
     genReqId(req, reply);
 
-    expect(reply.setHeader).toHaveBeenCalledWith('X-Request-Id', 'ABCDEFGHIJKLMNOP');
+    expect(reply.setHeader).toHaveBeenCalledWith(
+      'X-Request-Id',
+      'ABCDEFGHIJKLMNOP',
+    );
   });
 });

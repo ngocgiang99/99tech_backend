@@ -4,7 +4,6 @@ import {
   IncrementScoreHandler,
   USER_SCORE_REPOSITORY,
 } from './application/commands';
-import { JwksCache } from './infrastructure/auth/jwks-cache';
 import { JwtGuard } from './infrastructure/auth/jwt.guard';
 import { HmacActionTokenIssuer } from './infrastructure/auth/hmac-action-token.issuer';
 import { HmacActionTokenVerifier } from './infrastructure/auth/hmac-action-token.verifier';
@@ -32,7 +31,6 @@ import { ScoreboardController } from './interface/http/controllers/scoreboard.co
     // Application layer
     IncrementScoreHandler,
     // Auth
-    JwksCache,
     JwtGuard,
     HmacActionTokenIssuer,
     HmacActionTokenVerifier,

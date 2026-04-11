@@ -67,6 +67,7 @@ export function buildPinoLoggerOptions(
         '*.actionToken',
         '*.ACTION_TOKEN_SECRET',
         '*.ACTION_TOKEN_SECRET_PREV',
+        '*.INTERNAL_JWT_SECRET',
       ],
       remove: true,
     },

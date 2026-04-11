@@ -4,15 +4,22 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import * as jose from 'jose';
 import { trace, SpanStatusCode } from '@opentelemetry/api';
 
-import { JwksCache } from './jwks-cache';
+import { ConfigService } from '../../../config';
+
+// TODO: add INTERNAL_JWT_SECRET_PREV before production release — see archived change replace-jwks-with-internal-hs256 design.md Decision 1
 
 const tracer = trace.getTracer('scoreboard');
 
 @Injectable()
 export class JwtGuard implements CanActivate {
-  constructor(private readonly jwks: JwksCache) {}
+  private readonly secret: Uint8Array;
+
+  constructor(config: ConfigService) {
+    this.secret = new TextEncoder().encode(config.get('INTERNAL_JWT_SECRET'));
+  }
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     try {
@@ -56,7 +63,12 @@ export class JwtGuard implements CanActivate {
         'jwt.verify',
         async (span) => {
           try {
-            return await this.jwks.verify(token);
+            const { payload: jwtPayload } = await jose.jwtVerify(
+              token,
+              this.secret,
+              { algorithms: ['HS256'] },
+            );
+            return jwtPayload;
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             span.setStatus({ code: SpanStatusCode.ERROR, message: msg });
