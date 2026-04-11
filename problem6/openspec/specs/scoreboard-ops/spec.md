@@ -99,25 +99,19 @@ The multi-stage Dockerfile from `step-00` (preserved by AC-8 in `step-00`) SHALL
 - **THEN** `docker tag problem6/scoreboard-api:dev problem6/scoreboard-api:v1.0.0-rc1` is run
 - **AND** the operator has the runbook command for pushing to their registry
 
-### Requirement: Deployment IaC stubs exist in infra/
+### Requirement: Deployment is Docker-based; Kubernetes/Helm/Terraform are out of scope
 
-The system SHALL provide placeholder IaC stubs at `infra/helm/`, `infra/k8s/`, `infra/terraform/`. Each stub SHALL be clearly labeled "TEMPLATE — OPERATOR MUST CUSTOMIZE" and SHALL document the required topology (3 replicas, sticky sessions on `/v1/leaderboard/stream`, ConfigMap for env vars, SecretRef for `ACTION_TOKEN_SECRET`, PodDisruptionBudget `minAvailable: 2`).
+The system SHALL ship as a single Docker image built from the root `Dockerfile` (multi-stage: `runtime` target). The operator's production topology — whether Kubernetes, ECS, a VM, or bare Docker — is out of scope for this repository. Kubernetes manifests, Helm chart skeletons, and Terraform scaffolds are NOT provided; operators bring their own orchestration. The README's Rollout & Operations section (§16) documents the expected runtime contract (3 replicas, sticky sessions on `/v1/leaderboard/stream`, secrets via env var, graceful shutdown behavior); how the operator delivers that contract is their choice.
 
-#### Scenario: Helm chart skeleton exists
-- **WHEN** `infra/helm/` is inspected
-- **THEN** it contains `Chart.yaml`, `values.yaml`, `templates/deployment.yaml`, `templates/service.yaml`, `templates/ingress.yaml`, `templates/configmap.yaml`, `templates/secret.yaml`, `templates/pdb.yaml`
-- **AND** each template is labeled as a placeholder with TODO comments
+#### Scenario: Runtime image is built and tagged
+- **WHEN** the operator runs `mise run docker:build`
+- **THEN** the image `problem6/scoreboard-api:dev` is built from the `runtime` stage
+- **AND** the same image can be retagged (e.g. `v1.0.0-rc1`) and pushed to any registry
 
-#### Scenario: Kubernetes raw manifests exist
-- **WHEN** `infra/k8s/` is inspected
-- **THEN** it contains standalone YAML files for Deployment, Service, Ingress, ConfigMap, Secret stub, PDB
-- **AND** the Deployment specifies 3 replicas and references the image `problem6/scoreboard-api:<TAG>`
-- **AND** the Ingress includes sticky session annotations on `/v1/leaderboard/stream`
-
-#### Scenario: Terraform skeleton exists
-- **WHEN** `infra/terraform/` is inspected
-- **THEN** it contains `main.tf`, `variables.tf`, `outputs.tf` with a Kubernetes provider scaffold
-- **AND** comments explain that operators must fill in their cluster-specific values
+#### Scenario: Root-level IaC directory does NOT exist
+- **WHEN** the repository tree is inspected
+- **THEN** there is no top-level `infra/helm/`, `infra/k8s/`, or `infra/terraform/` directory
+- **AND** `problem6/infra/` contains only the developer-only `local/` observability stack (see `scoreboard-observability`)
 
 ### Requirement: Graceful shutdown via NestJS lifecycle hooks on all stateful adapters
 

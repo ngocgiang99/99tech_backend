@@ -1,6 +1,0 @@
-apiVersion: v2
-name: scoreboard
-version: 0.1.0
-appVersion: "1.0.0-rc1"
-description: "99tech problem6 scoreboard API — Helm chart TEMPLATE"
-type: application
