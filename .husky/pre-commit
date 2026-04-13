@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+
+staged=$(git diff --cached --name-only --diff-filter=d)
+
+if echo "$staged" | grep -q '^problem5/'; then
+  (cd problem5 && pnpm lint-staged --allow-empty) || exit 1
+fi
+
+if echo "$staged" | grep -q '^problem6/'; then
+  (cd problem6 && pnpm lint-staged --allow-empty) || exit 1
+fi

@@ -194,7 +194,7 @@ k6 ran in-compose with `BASE_URL=http://nginx:80`; see §Methodology.
 | stress | ramp | not run | — | — | — | — | — | out of scope |
 
 ¹ `vs single` = `prod_achieved_RPS / Benchmark.md_achieved_RPS` for the same scenario row.
-² smoke fires two requests per iteration (GET /healthz + GET /resources/:id), so the reported req/s is 2 × iter/s. `Benchmark.md`'s smoke row reports iter/s (3150 iter/s ≈ 6300 req/s); comparing like-for-like, the 956 iter/s achieved here is 0.30× the dev-stack iter/s. Smoke is a sanity check for "is nginx alive" — not a scaling benchmark.
+² smoke fires two requests per iteration (GET /healthz + GET /api/v1/resources/:id), so the reported req/s is 2 × iter/s. `Benchmark.md`'s smoke row reports iter/s (3150 iter/s ≈ 6300 req/s); comparing like-for-like, the 956 iter/s achieved here is 0.30× the dev-stack iter/s. Smoke is a sanity check for "is nginx alive" — not a scaling benchmark.
 ³ **Two read-load runs are reported.** The initial run was contaminated by session-level background contention (earlier smoke tests in the same session had poked dev api + grafana + prometheus, and the stats sampler was not yet watching the k6 container). The re-run was captured with the stats sampler extended to include the k6 container and the host-level Activity Monitor check described in §Interpretation. **The re-run is the load-bearing number for §Interpretation** — 6 976 RPS, 2.98% errors, p99 2.57 s — and delivers a real 1.32× lift over single-replica, though with 2.98% errors and p99 still far above the 500 ms SLO.
 
 ### Reading the primary workload rows

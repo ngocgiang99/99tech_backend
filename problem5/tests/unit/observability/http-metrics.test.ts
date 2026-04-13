@@ -44,9 +44,9 @@ describe('createHttpMetricsMiddleware', () => {
     const middleware = createHttpMetricsMiddleware(registry);
 
     const { req, res, finish } = buildReqRes({
-      path: '/resources/abc-123-def',
+      path: '/api/v1/resources/abc-123-def',
       method: 'GET',
-      route: { path: '/resources/:id' },
+      route: { path: '/api/v1/resources/:id' },
       statusCode: 200,
     });
 
@@ -55,8 +55,8 @@ describe('createHttpMetricsMiddleware', () => {
     finish();
 
     const output = await renderMetric(registry);
-    expect(output).toContain('route="/resources/:id"');
-    expect(output).not.toContain('route="/resources/abc-123-def"');
+    expect(output).toContain('route="/api/v1/resources/:id"');
+    expect(output).not.toContain('route="/api/v1/resources/abc-123-def"');
   });
 
   it('strips trailing slash when sub-router root is the matched route', async () => {
@@ -65,9 +65,9 @@ describe('createHttpMetricsMiddleware', () => {
 
     // Simulate GET /resources handled by `router.get('/')` mounted at '/resources'.
     const req = {
-      path: '/resources',
+      path: '/api/v1/resources',
       method: 'GET',
-      baseUrl: '/resources',
+      baseUrl: '/api/v1/resources',
       route: { path: '/' },
     };
     const res = Object.assign(new EventEmitter(), { statusCode: 200 });
@@ -77,8 +77,8 @@ describe('createHttpMetricsMiddleware', () => {
     res.emit('finish');
 
     const output = await renderMetric(registry);
-    expect(output).toContain('route="/resources"');
-    expect(output).not.toContain('route="/resources/"');
+    expect(output).toContain('route="/api/v1/resources"');
+    expect(output).not.toContain('route="/api/v1/resources/"');
   });
 
   it('prefixes sub-router mount point (baseUrl) onto the route pattern', async () => {
@@ -86,11 +86,11 @@ describe('createHttpMetricsMiddleware', () => {
     const middleware = createHttpMetricsMiddleware(registry);
 
     // Simulate the resources sub-router: the handler saw path '/:id' with
-    // baseUrl '/resources', and the full pattern should be '/resources/:id'.
+    // baseUrl '/api/v1/resources', and the full pattern should be '/api/v1/resources/:id'.
     const req = {
-      path: '/resources/abc',
+      path: '/api/v1/resources/abc',
       method: 'GET',
-      baseUrl: '/resources',
+      baseUrl: '/api/v1/resources',
       route: { path: '/:id' },
     };
     const res = Object.assign(new EventEmitter(), { statusCode: 200 });
@@ -100,7 +100,7 @@ describe('createHttpMetricsMiddleware', () => {
     res.emit('finish');
 
     const output = await renderMetric(registry);
-    expect(output).toContain('route="/resources/:id"');
+    expect(output).toContain('route="/api/v1/resources/:id"');
     expect(output).not.toContain('route="/:id"');
   });
 
@@ -170,9 +170,9 @@ describe('createHttpMetricsMiddleware', () => {
 
     for (let i = 0; i < 3; i++) {
       const { req, res, finish } = buildReqRes({
-        path: '/resources',
+        path: '/api/v1/resources',
         method: 'GET',
-        route: { path: '/resources' },
+        route: { path: '/api/v1/resources' },
         statusCode: 200,
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -184,7 +184,7 @@ describe('createHttpMetricsMiddleware', () => {
     // The counter should be 3. The exposition-format value is the last
     // field of the sample line.
     const match = output.match(
-      /^http_requests_total\{[^}]*route="\/resources"[^}]*\} (\d+)/m,
+      /^http_requests_total\{[^}]*route="\/api\/v1\/resources"[^}]*\} (\d+)/m,
     );
     expect(match?.[1]).toBe('3');
   });

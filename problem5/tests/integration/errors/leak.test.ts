@@ -78,7 +78,7 @@ describe('Response leak check — standard error paths', () => {
 
   it('case 1: POST invalid body → 400, no leak indicators in response', async () => {
     const res = await ctx.request
-      .post('/resources')
+      .post('/api/v1/resources')
       .set('Content-Type', 'application/json')
       .send('not-json-at-all');
 
@@ -93,9 +93,7 @@ describe('Response leak check — standard error paths', () => {
   });
 
   it('case 2: GET non-existent id → 404, no leak indicators in response', async () => {
-    const res = await ctx.request.get(
-      '/resources/99999999-9999-9999-9999-999999999999',
-    );
+    const res = await ctx.request.get('/api/v1/resources/99999999-9999-9999-9999-999999999999');
 
     expect(res.status).toBe(404);
     assertNoLeak(res.body);
@@ -132,11 +130,21 @@ function makeFailingRepo(): ResourceRepository {
   const fakePgErr = makeFakePgError('XX000');
   const boom = new InternalError('Forced internal error', { cause: fakePgErr });
   return {
-    create: async () => { throw boom; },
-    findById: async () => { throw boom; },
-    list: async () => { throw boom; },
-    update: async () => { throw boom; },
-    delete: async () => { throw boom; },
+    create: async () => {
+      throw boom;
+    },
+    findById: async () => {
+      throw boom;
+    },
+    list: async () => {
+      throw boom;
+    },
+    update: async () => {
+      throw boom;
+    },
+    delete: async () => {
+      throw boom;
+    },
   };
 }
 
@@ -175,8 +183,14 @@ describe('Response leak check — forced 500 path', () => {
     redis = createRedis({ url: config.REDIS_URL });
     if (redis.status !== 'ready') {
       await new Promise<void>((resolve, reject) => {
-        const onReady = (): void => { redis.off('error', onError); resolve(); };
-        const onError = (err: Error): void => { redis.off('ready', onReady); reject(err); };
+        const onReady = (): void => {
+          redis.off('error', onError);
+          resolve();
+        };
+        const onError = (err: Error): void => {
+          redis.off('ready', onReady);
+          reject(err);
+        };
         redis.once('ready', onReady);
         redis.once('error', onError);
       });
@@ -190,29 +204,34 @@ describe('Response leak check — forced 500 path', () => {
     const failingRepo = makeFailingRepo();
     // createResourcesModule wires the repo internally from `db`, so we
     // bypass it and build our own service + controller + router with the stub:
-    const { ResourceService } = await import('../../../src/modules/resources/application/service.js');
-    const { createResourceController } = await import('../../../src/modules/resources/presentation/controller.js');
-    const { createResourcesRouter } = await import('../../../src/modules/resources/presentation/router.js');
+    const { ResourceService } =
+      await import('../../../src/modules/resources/application/service.js');
+    const { createResourceController } =
+      await import('../../../src/modules/resources/presentation/controller.js');
+    const { createResourcesRouter } =
+      await import('../../../src/modules/resources/presentation/router.js');
 
     const service = new ResourceService(failingRepo);
     const ctrl = createResourceController(service, { cacheEnabled: false });
     const router = createResourcesRouter(ctrl, 'test');
 
-    app.use('/resources', router);
+    app.use('/api/v1/resources', router);
     app.use(createErrorHandler(captureLogger));
 
     request = supertest(app);
   });
 
   afterAll(async () => {
-    try { await redis.quit(); } catch { redis.disconnect(); }
+    try {
+      await redis.quit();
+    } catch {
+      redis.disconnect();
+    }
     await pool.end();
   });
 
   it('case 3: forced 500 → no leak indicators, response has errorId UUID', async () => {
-    const res = await request.get(
-      '/resources/11111111-1111-1111-1111-111111111111',
-    );
+    const res = await request.get('/api/v1/resources/11111111-1111-1111-1111-111111111111');
 
     expect(res.status).toBe(500);
     assertNoLeak(res.body);
@@ -229,9 +248,7 @@ describe('Response leak check — forced 500 path', () => {
   it('case 4: errorId in response equals errorId in the captured log entry', async () => {
     logLines = []; // reset before this test
 
-    const res = await request.get(
-      '/resources/22222222-2222-2222-2222-222222222222',
-    );
+    const res = await request.get('/api/v1/resources/22222222-2222-2222-2222-222222222222');
 
     expect(res.status).toBe(500);
     const responseErrorId = res.body.error.errorId as string;
@@ -245,9 +262,8 @@ describe('Response leak check — forced 500 path', () => {
     expect(errorLogLine, 'Expected at least one error-level log entry').toBeDefined();
 
     const loggedErrorId = (errorLogLine?.['err'] as Record<string, unknown>)?.['errorId'];
-    expect(
-      loggedErrorId,
-      'errorId in log entry must match errorId in response',
-    ).toBe(responseErrorId);
+    expect(loggedErrorId, 'errorId in log entry must match errorId in response').toBe(
+      responseErrorId,
+    );
   });
 });

@@ -64,7 +64,7 @@ describe('isExcludedPath', () => {
   });
 
   it('does NOT exclude /resources', () => {
-    expect(isExcludedPath('/resources')).toBe(false);
+    expect(isExcludedPath('/api/v1/resources')).toBe(false);
   });
 
   it('does NOT exclude the root', () => {
@@ -145,7 +145,9 @@ describe('buildAllowlistMatcher', () => {
 
 // --- rateLimitExceededHandler (the 429 producer) ---------------------------
 
-function buildReq(overrides: Partial<Request> & { rateLimit?: { resetTime?: Date } } = {}): Request {
+function buildReq(
+  overrides: Partial<Request> & { rateLimit?: { resetTime?: Date } } = {},
+): Request {
   return {
     rateLimit: overrides.rateLimit,
     ...overrides,
@@ -245,9 +247,9 @@ describe('skip composition', () => {
   }
 
   it('returns true for a loopback IP regardless of path', () => {
-    expect(skipPredicate('127.0.0.1', '/resources')).toBe(true);
-    expect(skipPredicate('127.0.0.1', '/resources/abc')).toBe(true);
-    expect(skipPredicate('::1', '/resources')).toBe(true);
+    expect(skipPredicate('127.0.0.1', '/api/v1/resources')).toBe(true);
+    expect(skipPredicate('127.0.0.1', '/api/v1/resources/abc')).toBe(true);
+    expect(skipPredicate('::1', '/api/v1/resources')).toBe(true);
   });
 
   it('returns true for /healthz regardless of IP', () => {
@@ -260,14 +262,14 @@ describe('skip composition', () => {
   });
 
   it('returns false for a non-loopback IP on a non-excluded path', () => {
-    expect(skipPredicate('203.0.113.5', '/resources')).toBe(false);
+    expect(skipPredicate('203.0.113.5', '/api/v1/resources')).toBe(false);
   });
 
   it('returns true for an allow-listed non-loopback IP on a non-excluded path', () => {
-    expect(skipPredicate('10.5.5.5', '/resources')).toBe(true);
+    expect(skipPredicate('10.5.5.5', '/api/v1/resources')).toBe(true);
   });
 
   it('returns false for a non-allow-listed IP on /resources', () => {
-    expect(skipPredicate('192.168.1.5', '/resources')).toBe(false);
+    expect(skipPredicate('192.168.1.5', '/api/v1/resources')).toBe(false);
   });
 });

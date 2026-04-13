@@ -2,7 +2,7 @@
  * Smoke scenario — service alive under minimal load.
  *
  * 1 VU runs for 30 s, checks that /healthz responds 200 and that a single
- * GET /resources/:id from the seed pool also responds 200.
+ * GET /api/v1/resources/:id from the seed pool also responds 200.
  *
  * Thresholds are intentionally loosened (p99 < 1000 ms) relative to the
  * production SLO (500 ms) because a cold-start laptop run should still pass.

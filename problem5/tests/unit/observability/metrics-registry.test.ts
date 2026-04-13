@@ -9,10 +9,14 @@ describe('MetricsRegistry', () => {
     // them. Counter/Gauge/Histogram all have inc/set/observe with default
     // label values.
     registry.httpRequestDurationSeconds.observe(
-      { method: 'GET', route: '/resources/:id', status_code: '200' },
+      { method: 'GET', route: '/api/v1/resources/:id', status_code: '200' },
       0.01,
     );
-    registry.httpRequestsTotal.inc({ method: 'GET', route: '/resources/:id', status_code: '200' });
+    registry.httpRequestsTotal.inc({
+      method: 'GET',
+      route: '/api/v1/resources/:id',
+      status_code: '200',
+    });
     registry.cacheOperationsTotal.inc({ operation: 'get', result: 'hit' });
     registry.cacheOperationDurationSeconds.observe({ operation: 'get' }, 0.001);
     registry.dbQueryDurationSeconds.observe({ operation: 'select' }, 0.005);
@@ -45,7 +49,7 @@ describe('MetricsRegistry', () => {
   it('records labels with the exact allowed label names', async () => {
     const registry = new MetricsRegistry({ collectDefaults: false });
     registry.httpRequestDurationSeconds.observe(
-      { method: 'POST', route: '/resources', status_code: '201' },
+      { method: 'POST', route: '/api/v1/resources', status_code: '201' },
       0.02,
     );
 
@@ -53,7 +57,7 @@ describe('MetricsRegistry', () => {
 
     // One exemplar sample line should contain all three labels together.
     expect(output).toMatch(
-      /http_request_duration_seconds[^}]*method="POST"[^}]*route="\/resources"[^}]*status_code="201"/,
+      /http_request_duration_seconds[^}]*method="POST"[^}]*route="\/api\/v1\/resources"[^}]*status_code="201"/,
     );
   });
 

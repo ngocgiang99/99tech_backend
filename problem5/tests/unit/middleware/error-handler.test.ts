@@ -22,8 +22,12 @@ const silentLogger = pino({ level: 'silent' });
 function buildMockRes(): Response {
   const res = {
     headersSent: false,
-    status: vi.fn(function (this: Response) { return this; }),
-    json: vi.fn(function (this: Response) { return this; }),
+    status: vi.fn(function (this: Response) {
+      return this;
+    }),
+    json: vi.fn(function (this: Response) {
+      return this;
+    }),
   } as unknown as Response;
   return res;
 }
@@ -32,7 +36,7 @@ function buildMockReq(overrides: Partial<Record<string, unknown>> = {}): Request
   return {
     id: 'req-test-123',
     method: 'GET',
-    url: '/resources/abc',
+    url: '/api/v1/resources/abc',
     ip: '127.0.0.1',
     headers: { 'content-type': 'application/json' },
     socket: { remoteAddress: '127.0.0.1' },
@@ -48,7 +52,9 @@ describe('createErrorHandler — known AppError', () => {
   it('handles ValidationError → 400 VALIDATION with details', () => {
     const handler = createErrorHandler(silentLogger);
     const res = buildMockRes();
-    const err = new ValidationError('bad input', [{ path: 'name', code: 'required', message: 'Name is required' }]);
+    const err = new ValidationError('bad input', [
+      { path: 'name', code: 'required', message: 'Name is required' },
+    ]);
     handler(err, buildMockReq(), res, vi.fn());
 
     expect(res.status).toHaveBeenCalledWith(400);
@@ -58,7 +64,9 @@ describe('createErrorHandler — known AppError', () => {
     expect(body.error['code']).toBe('VALIDATION');
     expect(body.error['message']).toBe('bad input');
     expect(body.error['requestId']).toBe('req-test-123');
-    expect(body.error['details']).toEqual([{ path: 'name', code: 'required', message: 'Name is required' }]);
+    expect(body.error['details']).toEqual([
+      { path: 'name', code: 'required', message: 'Name is required' },
+    ]);
     expect(body.error).not.toHaveProperty('errorId');
   });
 
@@ -176,7 +184,12 @@ describe('createErrorHandler — thrown non-Error values', () => {
   it('handles a thrown object literal → 500 INTERNAL_ERROR', () => {
     const handler = createErrorHandler(silentLogger);
     const res = buildMockRes();
-    handler({ code: 'DB_DOWN', detail: 'secret' } as unknown as Error, buildMockReq(), res, vi.fn());
+    handler(
+      { code: 'DB_DOWN', detail: 'secret' } as unknown as Error,
+      buildMockReq(),
+      res,
+      vi.fn(),
+    );
 
     expect(res.status).toHaveBeenCalledWith(500);
     const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
@@ -300,8 +313,12 @@ describe('createErrorHandler — errorId', () => {
     handler(new InternalError(), buildMockReq(), res1, vi.fn());
     handler(new InternalError(), buildMockReq(), res2, vi.fn());
 
-    const body1 = (res1.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as { error: Record<string, unknown> };
-    const body2 = (res2.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as { error: Record<string, unknown> };
+    const body1 = (res1.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+      error: Record<string, unknown>;
+    };
+    const body2 = (res2.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+      error: Record<string, unknown>;
+    };
     expect(body1.error['errorId']).not.toBe(body2.error['errorId']);
   });
 
@@ -310,7 +327,9 @@ describe('createErrorHandler — errorId', () => {
     const res = buildMockRes();
     handler(new ValidationError('bad'), buildMockReq(), res, vi.fn());
 
-    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as { error: Record<string, unknown> };
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+      error: Record<string, unknown>;
+    };
     expect(body.error).not.toHaveProperty('errorId');
   });
 });
@@ -325,7 +344,9 @@ describe('createErrorHandler — requestId', () => {
     const res = buildMockRes();
     handler(new NotFoundError(), buildMockReq({ id: 'my-custom-id' }), res, vi.fn());
 
-    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as { error: Record<string, unknown> };
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+      error: Record<string, unknown>;
+    };
     expect(body.error['requestId']).toBe('my-custom-id');
   });
 
@@ -336,7 +357,9 @@ describe('createErrorHandler — requestId', () => {
     delete (req as Record<string, unknown>)['id'];
     handler(new NotFoundError(), req, res, vi.fn());
 
-    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as { error: Record<string, unknown> };
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+      error: Record<string, unknown>;
+    };
     expect(body.error['requestId']).toBe('unknown');
   });
 });

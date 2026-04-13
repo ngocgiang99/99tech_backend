@@ -55,7 +55,7 @@ describe('metrics endpoint (integration)', () => {
 
   it('increments resources_operations_total on successful create', async () => {
     const res = await ctx.request
-      .post('/resources')
+      .post('/api/v1/resources')
       .send({ name: 'metric-test', type: 'widget' });
     expect(res.status).toBe(201);
 
@@ -67,7 +67,7 @@ describe('metrics endpoint (integration)', () => {
 
   it('increments resources_operations_total{outcome="not_found"} on GET for missing id', async () => {
     const missingId = uuidv4();
-    const res = await ctx.request.get(`/resources/${missingId}`);
+    const res = await ctx.request.get(`/api/v1/resources/${missingId}`);
     expect(res.status).toBe(404);
 
     const metrics = await ctx.request.get('/metrics');
@@ -78,12 +78,12 @@ describe('metrics endpoint (integration)', () => {
 
   it('increments cache_operations_total on cache hit and miss', async () => {
     const created = await ctx.request
-      .post('/resources')
+      .post('/api/v1/resources')
       .send({ name: 'cache-test', type: 'widget' });
     const id = created.body.id as string;
 
-    await ctx.request.get(`/resources/${id}`); // MISS → set
-    await ctx.request.get(`/resources/${id}`); // HIT
+    await ctx.request.get(`/api/v1/resources/${id}`); // MISS → set
+    await ctx.request.get(`/api/v1/resources/${id}`); // HIT
 
     const metrics = await ctx.request.get('/metrics');
     expect(metrics.text).toMatch(
@@ -95,17 +95,13 @@ describe('metrics endpoint (integration)', () => {
   });
 
   it('records db_query_duration_seconds observations', async () => {
-    await ctx.request.post('/resources').send({ name: 'db-test', type: 'widget' });
-    await ctx.request.get('/resources');
+    await ctx.request.post('/api/v1/resources').send({ name: 'db-test', type: 'widget' });
+    await ctx.request.get('/api/v1/resources');
 
     const metrics = await ctx.request.get('/metrics');
     // Histogram count series should reflect at least the insert and the select.
-    expect(metrics.text).toMatch(
-      /db_query_duration_seconds_count\{operation="insert"\} [1-9]/,
-    );
-    expect(metrics.text).toMatch(
-      /db_query_duration_seconds_count\{operation="select"\} [1-9]/,
-    );
+    expect(metrics.text).toMatch(/db_query_duration_seconds_count\{operation="insert"\} [1-9]/);
+    expect(metrics.text).toMatch(/db_query_duration_seconds_count\{operation="select"\} [1-9]/);
   });
 
   it('db_pool_size gauge is present with all three state labels', async () => {
@@ -134,7 +130,7 @@ describe('metrics endpoint (integration)', () => {
     // for every request, not the literal URL.
     const N = 25;
     for (let i = 0; i < N; i++) {
-      await ctx.request.get(`/resources/${uuidv4()}`);
+      await ctx.request.get(`/api/v1/resources/${uuidv4()}`);
     }
 
     const metrics = await ctx.request.get('/metrics');
@@ -142,7 +138,8 @@ describe('metrics endpoint (integration)', () => {
     // Extract all `route="..."` label values from the histogram output.
     // In a cardinality-safe implementation, the set of distinct route
     // values should be O(routes × statuses) — well under N.
-    const labelMatches = metrics.text.match(/http_request_duration_seconds[^}]*route="([^"]+)"/g) ?? [];
+    const labelMatches =
+      metrics.text.match(/http_request_duration_seconds[^}]*route="([^"]+)"/g) ?? [];
     const distinctRoutes = new Set<string>();
     for (const line of labelMatches) {
       const m = line.match(/route="([^"]+)"/);

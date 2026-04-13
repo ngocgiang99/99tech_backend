@@ -58,7 +58,7 @@ An ExpressJS + TypeScript CRUD service backed by Postgres and Redis.
 Create your first resource:
 
 ```bash
-curl -s -X POST http://localhost:3000/resources \
+curl -s -X POST http://localhost:3000/api/v1/resources \
   -H 'Content-Type: application/json' \
   -d '{"name":"my-widget","type":"widget","tags":["demo"]}' | jq .
 ```
@@ -362,9 +362,9 @@ Canonical numbers from the multi-replica run live in [`Benchmark_prod.md`](./Ben
 The Resources API is an Express 5 + TypeScript service backed by Postgres (Kysely) and Redis (ioredis). Five design decisions characterize it:
 
 - **Layered decomposition.** Each feature module splits into `presentation` → `application` → `infrastructure`, with terminal cross-cutting layers (`src/shared/`, `src/infrastructure/`) holding driver-level primitives. Dependency direction is **lint-enforced** by ESLint `no-restricted-imports` — a violation is a build error, not a review comment.
-- **Cache-aside with version-counter invalidation.** `GET /resources/:id` and `GET /resources` are wrapped by a `CachedResourceRepository` decorator over the Postgres repo. Detail entries use straightforward TTL + key DEL on write. List entries embed a monotonic `resource:list:version` counter in their key — every successful write does one Redis `INCR`, atomically invalidating every cached list page in one op (no `KEYS *` scanning).
+- **Cache-aside with version-counter invalidation.** `GET /api/v1/resources/:id` and `GET /api/v1/resources` are wrapped by a `CachedResourceRepository` decorator over the Postgres repo. Detail entries use straightforward TTL + key DEL on write. List entries embed a monotonic `resource:list:version` counter in their key — every successful write does one Redis `INCR`, atomically invalidating every cached list page in one op (no `KEYS *` scanning).
 - **Graceful degradation when Redis is unavailable.** Every Redis call is wrapped in `try`/`catch`. On failure the cache layer becomes a pass-through to Postgres, the request still succeeds, and the outage surfaces in `/healthz` rather than as a 500. Writes commit normally; cache invalidation failures are logged at `warn` and TTLs bound the staleness window.
-- **Keyset (cursor) pagination, not offset.** `GET /resources` uses a composite `(created_at DESC, id DESC)` index with an opaque `nextCursor` token, so list latency stays flat regardless of how deep the caller paginates.
+- **Keyset (cursor) pagination, not offset.** `GET /api/v1/resources` uses a composite `(created_at DESC, id DESC)` index with an opaque `nextCursor` token, so list latency stays flat regardless of how deep the caller paginates.
 - **k6 benchmark suite as the performance contract.** Eight reusable k6 scenarios under `benchmarks/` cover smoke / read-load / write-load / mixed / spike / stress / cache-cold / cache-warm. The cache-cold vs cache-warm comparison is the empirical signal for whether the Redis layer earns its complexity cost. Methodology and laptop results live in [`Benchmark.md`](./Benchmark.md).
 
 For the diagrams, data model, deployment topology, failure modes table, and the full layering rules, see → [`ARCHITECTURE.md`](./ARCHITECTURE.md).
@@ -373,19 +373,19 @@ For the diagrams, data model, deployment topology, failure modes table, and the 
 
 ## API Endpoints
 
-| Method | Path                       | Description              |
-|--------|----------------------------|--------------------------|
-| GET    | /healthz                   | Liveness + readiness     |
-| GET    | /healthz?probe=liveness    | Liveness only (fast)     |
-| POST   | /resources                 | Create a resource        |
-| GET    | /resources                 | List resources (filtered, paginated) |
-| GET    | /resources/:id             | Get resource by ID       |
-| PATCH  | /resources/:id             | Partially update resource |
-| DELETE | /resources/:id             | Delete resource          |
+| Method | Path                          | Description              |
+|--------|-------------------------------|--------------------------|
+| GET    | /healthz                      | Liveness + readiness     |
+| GET    | /healthz?probe=liveness       | Liveness only (fast)     |
+| POST   | /api/v1/resources             | Create a resource        |
+| GET    | /api/v1/resources             | List resources (filtered, paginated) |
+| GET    | /api/v1/resources/:id         | Get resource by ID       |
+| PATCH  | /api/v1/resources/:id         | Partially update resource |
+| DELETE | /api/v1/resources/:id         | Delete resource          |
 
 ### List Resources — Filter Parameters
 
-`GET /resources` accepts the following query parameters:
+`GET /api/v1/resources` accepts the following query parameters:
 
 | Parameter      | Type     | Description                                                       |
 |---------------|----------|-------------------------------------------------------------------|
@@ -405,11 +405,11 @@ The list endpoint uses keyset (cursor-based) pagination, not offset. This ensure
 
 ```bash
 # First page
-curl "http://localhost:3000/resources?limit=10"
+curl "http://localhost:3000/api/v1/resources?limit=10"
 # Response includes nextCursor: "eyJjcmVh..."
 
 # Next page
-curl "http://localhost:3000/resources?limit=10&cursor=eyJjcmVh..."
+curl "http://localhost:3000/api/v1/resources?limit=10&cursor=eyJjcmVh..."
 # When nextCursor is null, you have reached the last page
 ```
 
@@ -430,8 +430,8 @@ All variables are listed in `.env.example` with their defaults.
 | `DB_POOL_MAX`                   | No       | `10`                                               | Max Postgres pool connections       |
 | `REDIS_URL`                     | **Yes**  | `redis://localhost:6379`                           | Redis connection URL                |
 | `CACHE_ENABLED`                 | No       | `true`                                             | Kill switch for the Redis cache     |
-| `CACHE_DETAIL_TTL_SECONDS`      | No       | `300`                                              | TTL for `GET /resources/:id` cache  |
-| `CACHE_LIST_TTL_SECONDS`        | No       | `60`                                               | TTL for `GET /resources` list cache |
+| `CACHE_DETAIL_TTL_SECONDS`      | No       | `300`                                              | TTL for `GET /api/v1/resources/:id` cache  |
+| `CACHE_LIST_TTL_SECONDS`        | No       | `60`                                               | TTL for `GET /api/v1/resources` list cache |
 | `CACHE_LIST_VERSION_KEY_PREFIX` | No       | `resource:list:version`                            | Redis key for list version counter  |
 | `SHUTDOWN_TIMEOUT_MS`           | No       | `10000`                                            | Max ms to drain before force-exit   |
 | `METRICS_ENABLED`               | No       | `true`                                             | Master toggle for Prometheus metrics. When `false`, `/metrics` is not mounted and the HTTP/cache/db instrumentation does nothing. |
@@ -464,7 +464,7 @@ datetime-prefixed file, so existing and new migrations coexist safely.
 
 ## Caching
 
-`GET /resources/:id` and `GET /resources` are served through a Redis cache layer
+`GET /api/v1/resources/:id` and `GET /api/v1/resources` are served through a Redis cache layer
 implemented as a decorator over the Postgres repository. The cache is transparent
 to callers — response bodies are identical whether the data came from Redis or
 Postgres — but an `X-Cache` response header reports the outcome on every GET.
@@ -476,7 +476,7 @@ Postgres — but an `X-Cache` response header reports the outcome on every GET.
   to Postgres first, then invalidate affected cache entries.
 - **Detail caching** (`GET /:id`). Keyed as `resource:v1:id:{uuid}`, TTL
   `CACHE_DETAIL_TTL_SECONDS` (default 300 s). Deleted on `PATCH` / `DELETE`.
-- **List caching** (`GET /resources`). Keyed as
+- **List caching** (`GET /api/v1/resources`). Keyed as
   `resource:v1:list:{version}:{sha256-16(normalizedFilters)}`, TTL
   `CACHE_LIST_TTL_SECONDS` (default 60 s). Filter tuples are normalized
   (keys sorted, array values sorted) before hashing, so `?status=a&status=b`
@@ -511,7 +511,7 @@ carries an `X-Cache` header:
 | `BYPASS` | The cache is disabled (`CACHE_ENABLED=false`).                |
 
 ```bash
-curl -i http://localhost:3000/resources/{id} | grep X-Cache
+curl -i http://localhost:3000/api/v1/resources/{id} | grep X-Cache
 # First call  → X-Cache: MISS
 # Second call → X-Cache: HIT
 # After PATCH → X-Cache: MISS  (detail entry was invalidated)
@@ -824,7 +824,7 @@ log, format response.
 
 ## Rate limiting
 
-The API protects every route under `/resources` with a per-IP rate-limit
+The API protects every route under `/api/v1/resources` with a per-IP rate-limit
 middleware. The middleware is implemented as a thin wrapper around
 `express-rate-limit` + `rate-limit-redis` in `src/middleware/rate-limit.ts`
 and wired into `src/http/app.ts` between `pinoHttp` and `express.json()` so
@@ -835,8 +835,8 @@ cost. The canonical contract lives in
 ### What is limited
 
 - **Scope**: one global bucket per source IP, shared across every route
-  and method. Mixing `GET /resources`, `POST /resources`, and
-  `GET /resources/:id` all count against the same counter.
+  and method. Mixing `GET /api/v1/resources`, `POST /api/v1/resources`, and
+  `GET /api/v1/resources/:id` all count against the same counter.
 - **Default limit**: `RATE_LIMIT_MAX=1000` requests per
   `RATE_LIMIT_WINDOW_MS=60000` (1 minute) — about 16 req/sec sustained,
   which is generous for any human-driven UI and tight enough to bounce a

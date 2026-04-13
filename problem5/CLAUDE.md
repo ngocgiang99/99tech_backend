@@ -93,7 +93,8 @@ src/http/app.ts                            (Express wiring + middleware)
      ▼ createResourcesModule({ db, cache, logger })
 src/modules/resources/index.ts             (module factory → { router })
      │
-     ▼ app.use('/resources', router)
+     ▼ const v1 = Router(); v1.use('/resources', router); app.use('/api/v1', v1)
+     (health and metrics routes remain at root level)
 presentation/router → presentation/controller → application/service → infrastructure/(cached-)repository → Kysely → pg.Pool
      │
      ▼ errorHandler (last middleware)
@@ -142,7 +143,7 @@ The active roadmap is `s02` (resources CRUD, currently being implemented) throug
 ### Conventions Worth Preserving
 
 - **ESM `.js` import suffixes** in TypeScript source (e.g. `import { foo } from './bar.js'`) — the project emits native ESM and this is required.
-- **DI via factory functions**, not classes with static state. Modules expose a single `create<Feature>Module(deps)` factory from `src/modules/<name>/index.ts` that returns `{ router }`; `src/http/app.ts` wires the module in with `app.use('/<feature>', module.router)`.
+- **DI via factory functions**, not classes with static state. Modules expose a single `create<Feature>Module(deps)` factory from `src/modules/<name>/index.ts` that returns `{ router }`; `src/http/app.ts` wires the module in via a versioned router: `v1.use('/<feature>', module.router)` mounted at `app.use('/api/v1', v1)`. Health and metrics routes remain at root level.
 - **Strict Zod schemas** (`.strict()`) on request bodies so unknown keys fail loudly.
 - **Body parser limit is 64 KB** — raising it requires reviewing the `VALIDATION` error path and the metadata size limits in `resources/schema.ts`.
 - **64 KB request / 16 KB metadata** size caps are enforced at the Zod layer, not at the DB. If you relax one, check both.
