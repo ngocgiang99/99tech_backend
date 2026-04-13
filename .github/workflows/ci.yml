@@ -27,9 +27,15 @@ jobs:
         include:
           - project: problem5
             working_dir: problem5
-            test_cmd: "mise run test:unit"
+            setup_cmd: "pnpm install --frozen-lockfile"
+            typecheck_cmd: "pnpm typecheck"
+            lint_cmd: "pnpm lint"
+            test_cmd: "pnpm test:unit"
           - project: problem6
             working_dir: problem6
+            setup_cmd: "mise run setup"
+            typecheck_cmd: "mise run typecheck"
+            lint_cmd: "mise run lint"
             test_cmd: "mise run test"
 
     defaults:
@@ -49,13 +55,13 @@ jobs:
           version: 2026.4.8
 
       - name: Install dependencies
-        run: mise run setup
+        run: ${{ matrix.setup_cmd }}
 
       - name: Type check
-        run: mise run typecheck
+        run: ${{ matrix.typecheck_cmd }}
 
       - name: Lint
-        run: mise run lint
+        run: ${{ matrix.lint_cmd }}
 
       - name: Run tests
         run: ${{ matrix.test_cmd }}
