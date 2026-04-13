@@ -45,6 +45,8 @@ jobs:
 
       - name: Install mise and project tools
         uses: jdx/mise-action@v2
+        with:
+          version: 2026.4.8
 
       - name: Install dependencies
         run: mise run setup
