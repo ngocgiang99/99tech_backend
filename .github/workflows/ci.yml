@@ -17,37 +17,49 @@ on:
       - ".github/workflows/ci.yml"
 
 jobs:
-  quality-gates:
-    name: "quality-gates (${{ matrix.project }})"
+  problem5:
+    name: "quality-gates (problem5)"
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - project: problem5
-            working_dir: problem5
-            setup_cmd: "pnpm install --frozen-lockfile"
-            typecheck_cmd: "pnpm typecheck"
-            lint_cmd: "pnpm lint"
-            test_cmd: "pnpm test:unit"
-          - project: problem6
-            working_dir: problem6
-            setup_cmd: "mise run setup"
-            typecheck_cmd: "mise run typecheck"
-            lint_cmd: "mise run lint"
-            test_cmd: "mise run test"
-
     defaults:
       run:
-        working-directory: ${{ matrix.working_dir }}
-
+        working-directory: problem5
     env:
       HUSKY: "0"
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: problem5/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Run tests
+        run: pnpm test:unit
+
+  problem6:
+    name: "quality-gates (problem6)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: problem6
+    env:
+      HUSKY: "0"
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Install mise and project tools
         uses: jdx/mise-action@v2
@@ -55,13 +67,13 @@ jobs:
           version: 2026.4.8
 
       - name: Install dependencies
-        run: ${{ matrix.setup_cmd }}
+        run: mise run setup
 
       - name: Type check
-        run: ${{ matrix.typecheck_cmd }}
+        run: mise run typecheck
 
       - name: Lint
-        run: ${{ matrix.lint_cmd }}
+        run: mise run lint
 
       - name: Run tests
-        run: ${{ matrix.test_cmd }}
+        run: mise run test
