@@ -15,7 +15,7 @@ A `Resource` SHALL be persisted with the following fields: `id` (UUID, server-ge
 
 #### Scenario: Client creates a resource with only required fields
 
-- **WHEN** a client `POST`s `{"name": "foo", "type": "widget"}` to `/resources`
+- **WHEN** a client `POST`s `{"name": "foo", "type": "widget"}` to `/api/v1/resources`
 - **THEN** the response status is `201 Created`
 - **AND** the response body contains all fields with server-generated `id`, `status = "active"`, `tags = []`, `metadata = {}`, and equal `createdAt`/`updatedAt`
 
@@ -27,13 +27,13 @@ A `Resource` SHALL be persisted with the following fields: `id` (UUID, server-ge
 
 ### Requirement: Create Resource
 
-The service SHALL accept `POST /resources` with a JSON body matching the create schema, persist a new resource, and return the persisted representation.
+The service SHALL accept `POST /api/v1/resources` with a JSON body matching the create schema, persist a new resource, and return the persisted representation.
 
 #### Scenario: Valid create request
 
-- **WHEN** a client sends a valid JSON body to `POST /resources`
+- **WHEN** a client sends a valid JSON body to `POST /api/v1/resources`
 - **THEN** the response status is `201 Created`
-- **AND** the `Location` header is `/resources/{id}`
+- **AND** the `Location` header is `/api/v1/resources/{id}`
 - **AND** the response body is the full `Resource` representation including server-generated fields
 
 #### Scenario: Request body is not JSON
@@ -51,33 +51,33 @@ The service SHALL accept `POST /resources` with a JSON body matching the create 
 
 ### Requirement: Get Resource by Id
 
-The service SHALL accept `GET /resources/:id` where `:id` is a UUID and SHALL return the persisted resource or a not-found error.
+The service SHALL accept `GET /api/v1/resources/:id` where `:id` is a UUID and SHALL return the persisted resource or a not-found error.
 
 #### Scenario: Resource exists
 
-- **WHEN** a client sends `GET /resources/{existing-id}`
+- **WHEN** a client sends `GET /api/v1/resources/{existing-id}`
 - **THEN** the response status is `200 OK`
 - **AND** the body is the full `Resource` representation
 
 #### Scenario: Resource does not exist
 
-- **WHEN** a client sends `GET /resources/{random-uuid}`
+- **WHEN** a client sends `GET /api/v1/resources/{random-uuid}`
 - **THEN** the response status is `404 Not Found`
 - **AND** the body is `{"error": {"code": "NOT_FOUND", "message": "Resource not found"}}`
 
 #### Scenario: Id is not a UUID
 
-- **WHEN** a client sends `GET /resources/not-a-uuid`
+- **WHEN** a client sends `GET /api/v1/resources/not-a-uuid`
 - **THEN** the response status is `400 Bad Request`
 - **AND** the error code is `VALIDATION`
 
 ### Requirement: Update Resource
 
-The service SHALL accept `PATCH /resources/:id` with a partial JSON body, apply a field-level merge to the existing resource, refresh `updatedAt`, and return the new representation. Only fields present in the body are modified; `id`, `createdAt`, and `updatedAt` are never writable by the client.
+The service SHALL accept `PATCH /api/v1/resources/:id` with a partial JSON body, apply a field-level merge to the existing resource, refresh `updatedAt`, and return the new representation. Only fields present in the body are modified; `id`, `createdAt`, and `updatedAt` are never writable by the client.
 
 #### Scenario: Partial update of a mutable field
 
-- **WHEN** a client sends `PATCH /resources/{id}` with `{"status": "archived"}`
+- **WHEN** a client sends `PATCH /api/v1/resources/{id}` with `{"status": "archived"}`
 - **THEN** the response status is `200 OK`
 - **AND** the response body's `status` equals `"archived"`
 - **AND** the `updatedAt` is strictly greater than the previous `updatedAt`
@@ -85,40 +85,40 @@ The service SHALL accept `PATCH /resources/:id` with a partial JSON body, apply 
 
 #### Scenario: Update of metadata merges or replaces (policy: replace)
 
-- **WHEN** a client sends `PATCH /resources/{id}` with `{"metadata": {"k": "v"}}`
+- **WHEN** a client sends `PATCH /api/v1/resources/{id}` with `{"metadata": {"k": "v"}}`
 - **THEN** the stored metadata is exactly `{"k": "v"}` — the previous `metadata` object is replaced, not merged
 - **AND** the response body reflects the replacement
 
 #### Scenario: Attempt to write a server-controlled field
 
-- **WHEN** a client sends `PATCH /resources/{id}` with `{"id": "different", "createdAt": "..."}`
+- **WHEN** a client sends `PATCH /api/v1/resources/{id}` with `{"id": "different", "createdAt": "..."}`
 - **THEN** the response status is `400 Bad Request`
 - **AND** no row is modified
 
 #### Scenario: Target resource does not exist
 
-- **WHEN** a client sends `PATCH /resources/{unknown-id}` with a valid body
+- **WHEN** a client sends `PATCH /api/v1/resources/{unknown-id}` with a valid body
 - **THEN** the response status is `404 Not Found`
 
 ### Requirement: Delete Resource
 
-The service SHALL accept `DELETE /resources/:id` and SHALL return `204 No Content` on success or `404 Not Found` if the resource does not exist. Deletes are hard deletes.
+The service SHALL accept `DELETE /api/v1/resources/:id` and SHALL return `204 No Content` on success or `404 Not Found` if the resource does not exist. Deletes are hard deletes.
 
 #### Scenario: Delete existing resource
 
-- **WHEN** a client sends `DELETE /resources/{existing-id}`
+- **WHEN** a client sends `DELETE /api/v1/resources/{existing-id}`
 - **THEN** the response status is `204 No Content`
 - **AND** the response body is empty
-- **AND** a subsequent `GET /resources/{id}` returns `404 Not Found`
+- **AND** a subsequent `GET /api/v1/resources/{id}` returns `404 Not Found`
 
 #### Scenario: Delete non-existent resource
 
-- **WHEN** a client sends `DELETE /resources/{random-uuid}`
+- **WHEN** a client sends `DELETE /api/v1/resources/{random-uuid}`
 - **THEN** the response status is `404 Not Found`
 
 ### Requirement: List Resources with Filters and Keyset Pagination
 
-The service SHALL accept `GET /resources` with the filter query parameters defined below, return up to `limit` results ordered by `createdAt DESC, id DESC`, and use keyset (not offset) pagination. The response body SHALL be `{"data": Resource[], "nextCursor": string | null}`.
+The service SHALL accept `GET /api/v1/resources` with the filter query parameters defined below, return up to `limit` results ordered by `createdAt DESC, id DESC`, and use keyset (not offset) pagination. The response body SHALL be `{"data": Resource[], "nextCursor": string | null}`.
 
 Supported filters:
 
@@ -134,7 +134,7 @@ Supported filters:
 
 #### Scenario: Unfiltered list returns newest first
 
-- **WHEN** a client sends `GET /resources?limit=5` against a table containing ten resources
+- **WHEN** a client sends `GET /api/v1/resources?limit=5` against a table containing ten resources
 - **THEN** the response status is `200 OK`
 - **AND** the response contains exactly five resources
 - **AND** results are ordered by `createdAt` descending, with ties broken by `id` descending
@@ -142,7 +142,7 @@ Supported filters:
 
 #### Scenario: Follow-up page via cursor
 
-- **WHEN** a client sends `GET /resources?limit=5&cursor={nextCursor}` using the cursor from the previous scenario
+- **WHEN** a client sends `GET /api/v1/resources?limit=5&cursor={nextCursor}` using the cursor from the previous scenario
 - **THEN** the response contains the next batch of resources in the same order
 - **AND** no resource appears in both pages
 
@@ -154,33 +154,33 @@ Supported filters:
 
 #### Scenario: Filter by type
 
-- **WHEN** a client sends `GET /resources?type=widget`
+- **WHEN** a client sends `GET /api/v1/resources?type=widget`
 - **THEN** every resource in `data` has `type == "widget"`
 
 #### Scenario: Filter by multiple statuses
 
-- **WHEN** a client sends `GET /resources?status=active&status=pending`
+- **WHEN** a client sends `GET /api/v1/resources?status=active&status=pending`
 - **THEN** every resource in `data` has `status` equal to `"active"` or `"pending"`
 
 #### Scenario: Filter by multiple tags (AND semantics)
 
-- **WHEN** a client sends `GET /resources?tag=red&tag=urgent`
+- **WHEN** a client sends `GET /api/v1/resources?tag=red&tag=urgent`
 - **THEN** every resource in `data` has both `"red"` and `"urgent"` in its `tags` array
 
 #### Scenario: Filter by createdAfter / createdBefore
 
-- **WHEN** a client sends `GET /resources?createdAfter=2026-01-01T00:00:00Z&createdBefore=2026-02-01T00:00:00Z`
+- **WHEN** a client sends `GET /api/v1/resources?createdAfter=2026-01-01T00:00:00Z&createdBefore=2026-02-01T00:00:00Z`
 - **THEN** every resource in `data` has `createdAt` in `[2026-01-01, 2026-02-01)`
 
 #### Scenario: Invalid filter value
 
-- **WHEN** a client sends `GET /resources?limit=999`
+- **WHEN** a client sends `GET /api/v1/resources?limit=999`
 - **THEN** the response status is `400 Bad Request`
 - **AND** the error body identifies `limit` as the offending field
 
 #### Scenario: Invalid cursor
 
-- **WHEN** a client sends `GET /resources?cursor=garbage`
+- **WHEN** a client sends `GET /api/v1/resources?cursor=garbage`
 - **THEN** the response status is `400 Bad Request`
 - **AND** the error code is `VALIDATION`
 
@@ -193,7 +193,7 @@ Supported filters:
 #### Scenario: Sort by name with a cursor compares names against names
 
 - **GIVEN** a client has seeded multiple resources with distinct names that sort alphabetically
-- **WHEN** the client issues `GET /resources?limit=N&sort=name` to fetch page 1
+- **WHEN** the client issues `GET /api/v1/resources?limit=N&sort=name` to fetch page 1
 - **AND** then follows the returned `nextCursor` to fetch page 2
 - **THEN** page 2's resources are all alphabetically after page 1's last resource
 - **AND** no resource appears on both pages
@@ -231,7 +231,7 @@ No other fields are permitted. The `message` field SHALL NOT contain implementat
 
 #### Scenario: 500 error shape and leak check
 
-- **WHEN** the error handler is triggered for an unexpected error on any `/resources` endpoint
+- **WHEN** the error handler is triggered for an unexpected error on any `/api/v1/resources` endpoint
 - **THEN** the response body matches the shared error shape
 - **AND** `code` is `"INTERNAL_ERROR"`
 - **AND** `message` is the generic string `"Internal server error"`
@@ -240,7 +240,7 @@ No other fields are permitted. The `message` field SHALL NOT contain implementat
 
 #### Scenario: Conflict error from unique violation
 
-- **WHEN** a `POST /resources` triggers a unique constraint violation in Postgres
+- **WHEN** a `POST /api/v1/resources` triggers a unique constraint violation in Postgres
 - **THEN** the infrastructure error mapper translates the pg error (code `23505`) to `ConflictError`
 - **AND** the response status is `409 Conflict`
 - **AND** the response body is `{"error": {"code": "CONFLICT", "message": "Resource already exists", "requestId": "..."}}`
@@ -252,7 +252,7 @@ The system SHALL decode the opaque base64url `cursor` query parameter into a typ
 
 #### Scenario: Same-deployment cache key is stable for identical requests
 
-- **GIVEN** the running deployment has served a request for `GET /resources?limit=5&sort=-createdAt` and populated the response cache with the result
+- **GIVEN** the running deployment has served a request for `GET /api/v1/resources?limit=5&sort=-createdAt` and populated the response cache with the result
 - **WHEN** an identical request arrives on the same deployment
 - **THEN** the cache-key derivation produces bytes-identical key material to the first request
 - **AND** the request is served as a cache HIT
@@ -289,6 +289,6 @@ The encoded cursor string's inner JSON shape changes from a pre-refactor `{creat
 #### Scenario: A legacy-shape cursor is rejected with VALIDATION
 
 - **GIVEN** a client holds a cursor encoded under the pre-refactor format (`{"createdAt":"...","id":"...","sort":"-createdAt"}` base64url-encoded)
-- **WHEN** the client sends that cursor to the post-refactor service in `GET /resources?cursor=<legacy>`
+- **WHEN** the client sends that cursor to the post-refactor service in `GET /api/v1/resources?cursor=<legacy>`
 - **THEN** the service responds `400 Bad Request` with error code `VALIDATION`
 - **AND** the client's recovery path is to re-request page 1 (omit the cursor)

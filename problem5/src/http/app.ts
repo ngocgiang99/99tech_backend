@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Router } from 'express';
 import type pino from 'pino';
 import pinoHttp from 'pino-http';
 import type { Kysely } from 'kysely';
@@ -109,13 +109,17 @@ export function buildApp(
     logger,
     ...(metricsWiring?.enabled ? { metrics: metricsWiring.metrics } : {}),
   });
-  app.use('/resources', resources.router);
+  const v1 = Router();
+  v1.use('/resources', resources.router);
+  app.use('/api/v1', v1);
 
   // Central error handler (must be last)
-  app.use(createErrorHandler(logger, {
-    ...(errorHandlerOpts ?? {}),
-    ...(metricsWiring?.enabled ? { metrics: metricsWiring.metrics } : {}),
-  }));
+  app.use(
+    createErrorHandler(logger, {
+      ...(errorHandlerOpts ?? {}),
+      ...(metricsWiring?.enabled ? { metrics: metricsWiring.metrics } : {}),
+    }),
+  );
 
   return app;
 }

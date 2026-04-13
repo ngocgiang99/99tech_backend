@@ -18,7 +18,7 @@ function makeReq(overrides: Partial<Record<string, unknown>> = {}): Request {
   return {
     id: 'req-test-id',
     method: 'GET',
-    url: '/resources/abc-123',
+    url: '/api/v1/resources/abc-123',
     ip: '127.0.0.1',
     headers: {
       'content-type': 'application/json',
@@ -26,7 +26,7 @@ function makeReq(overrides: Partial<Record<string, unknown>> = {}): Request {
       'user-agent': 'test-agent/1.0',
     },
     route: { path: '/:id' },
-    baseUrl: '/resources',
+    baseUrl: '/api/v1/resources',
     socket: { remoteAddress: '127.0.0.1' },
     ...overrides,
   } as unknown as Request;
@@ -91,10 +91,10 @@ describe('buildErrorMetadata — route extraction', () => {
   it('extracts matched route pattern (baseUrl + path)', () => {
     const metadata = buildErrorMetadata(
       new NotFoundError(),
-      makeReq({ route: { path: '/:id' }, baseUrl: '/resources' }),
+      makeReq({ route: { path: '/:id' }, baseUrl: '/api/v1/resources' }),
       makeRes(),
     );
-    expect(metadata.route).toBe('/resources/:id');
+    expect(metadata.route).toBe('/api/v1/resources/:id');
   });
 
   it('falls back to __unmatched when route is not set', () => {
@@ -109,10 +109,10 @@ describe('buildErrorMetadata — route extraction', () => {
   it('handles sub-router root path (baseUrl + /)', () => {
     const metadata = buildErrorMetadata(
       new NotFoundError(),
-      makeReq({ route: { path: '/' }, baseUrl: '/resources' }),
+      makeReq({ route: { path: '/' }, baseUrl: '/api/v1/resources' }),
       makeRes(),
     );
-    expect(metadata.route).toBe('/resources');
+    expect(metadata.route).toBe('/api/v1/resources');
   });
 });
 
@@ -131,11 +131,7 @@ describe('buildErrorMetadata — body fields', () => {
   });
 
   it('body.size is null when Content-Length is absent', () => {
-    const metadata = buildErrorMetadata(
-      new NotFoundError(),
-      makeReq({ headers: {} }),
-      makeRes(),
-    );
+    const metadata = buildErrorMetadata(new NotFoundError(), makeReq({ headers: {} }), makeRes());
     expect(metadata.body.size).toBeNull();
   });
 
@@ -149,20 +145,12 @@ describe('buildErrorMetadata — body fields', () => {
   });
 
   it('body.contentType is null when Content-Type is absent', () => {
-    const metadata = buildErrorMetadata(
-      new NotFoundError(),
-      makeReq({ headers: {} }),
-      makeRes(),
-    );
+    const metadata = buildErrorMetadata(new NotFoundError(), makeReq({ headers: {} }), makeRes());
     expect(metadata.body.contentType).toBeNull();
   });
 
   it('body object never contains raw body content', () => {
-    const metadata = buildErrorMetadata(
-      new ValidationError('bad input'),
-      makeReq(),
-      makeRes(),
-    );
+    const metadata = buildErrorMetadata(new ValidationError('bad input'), makeReq(), makeRes());
     const bodyKeys = Object.keys(metadata.body);
     expect(bodyKeys).toEqual(['size', 'contentType']);
   });
@@ -292,7 +280,7 @@ describe('buildErrorMetadata — query string', () => {
   it('extracts query string from URL', () => {
     const metadata = buildErrorMetadata(
       new NotFoundError(),
-      makeReq({ url: '/resources?name=foo&type=bar' }),
+      makeReq({ url: '/api/v1/resources?name=foo&type=bar' }),
       makeRes(),
     );
     expect(metadata.query).toBe('name=foo&type=bar');
@@ -301,7 +289,7 @@ describe('buildErrorMetadata — query string', () => {
   it('returns empty string when no query string', () => {
     const metadata = buildErrorMetadata(
       new NotFoundError(),
-      makeReq({ url: '/resources' }),
+      makeReq({ url: '/api/v1/resources' }),
       makeRes(),
     );
     expect(metadata.query).toBe('');
@@ -311,7 +299,7 @@ describe('buildErrorMetadata — query string', () => {
     const longQuery = 'a='.padEnd(2100, 'x');
     const metadata = buildErrorMetadata(
       new NotFoundError(),
-      makeReq({ url: `/resources?${longQuery}` }),
+      makeReq({ url: `/api/v1/resources?${longQuery}` }),
       makeRes(),
     );
     expect(metadata.query.length).toBe(2051); // 2048 + "...".length

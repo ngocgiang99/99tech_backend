@@ -3,7 +3,7 @@
  *
  * Ramping arrival rate peaking at ~1000 RPS (realistic for a co-located
  * laptop run where k6 and the API share CPU). Each iteration:
- *   95% → GET /resources/:id from the seed pool
+ *   95% → GET /api/v1/resources/:id from the seed pool
  *    5% → 50/50 split between POST and PATCH
  *
  * Custom counters track X-Cache header values so the Benchmark.md can report

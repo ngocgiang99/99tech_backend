@@ -25,7 +25,7 @@ async function seed(
 ): Promise<ResourceDto[]> {
   const results: ResourceDto[] = [];
   for (const p of payloads) {
-    const res = await ctx.request.post('/resources').send(p);
+    const res = await ctx.request.post('/api/v1/resources').send(p);
     results.push(res.body as ResourceDto);
     // Tiny delay to ensure distinct created_at timestamps for ordering assertions.
     await new Promise((r) => setTimeout(r, 5));
@@ -56,7 +56,7 @@ describe('resources list', () => {
       { name: 'r3', type: 'widget' },
     ]);
 
-    const res = await ctx.request.get('/resources');
+    const res = await ctx.request.get('/api/v1/resources');
     expect(res.status).toBe(200);
     const body = res.body as ListResponse;
     expect(body.data.map((r) => r.name)).toEqual(['r3', 'r2', 'r1']);
@@ -70,7 +70,7 @@ describe('resources list', () => {
       { name: 'g1', type: 'gadget' },
     ]);
 
-    const res = await ctx.request.get('/resources?type=gadget');
+    const res = await ctx.request.get('/api/v1/resources?type=gadget');
     const body = res.body as ListResponse;
     expect(body.data.map((r) => r.name)).toEqual(['g1']);
   });
@@ -82,7 +82,7 @@ describe('resources list', () => {
       { name: 'c', type: 'widget', status: 'archived' },
     ]);
 
-    const res = await ctx.request.get('/resources?status=active&status=pending');
+    const res = await ctx.request.get('/api/v1/resources?status=active&status=pending');
     const body = res.body as ListResponse;
     expect(body.data.map((r) => r.status).sort()).toEqual(['active', 'pending']);
   });
@@ -94,7 +94,7 @@ describe('resources list', () => {
       { name: 'urgent-only', type: 'widget', tags: ['urgent'] },
     ]);
 
-    const res = await ctx.request.get('/resources?tag=red&tag=urgent');
+    const res = await ctx.request.get('/api/v1/resources?tag=red&tag=urgent');
     const body = res.body as ListResponse;
     expect(body.data.map((r) => r.name)).toEqual(['both']);
   });
@@ -106,7 +106,7 @@ describe('resources list', () => {
       { name: 'other', type: 'widget' },
     ]);
 
-    const res = await ctx.request.get(`/resources?ownerId=${ownerId}`);
+    const res = await ctx.request.get(`/api/v1/resources?ownerId=${ownerId}`);
     const body = res.body as ListResponse;
     expect(body.data.map((r) => r.name)).toEqual(['mine']);
   });
@@ -123,7 +123,7 @@ describe('resources list', () => {
     const after = '2020-01-01T00:00:00.000Z';
     const before = '2099-12-31T23:59:59.999Z';
     const res = await ctx.request.get(
-      `/resources?createdAfter=${after}&createdBefore=${before}`,
+      `/api/v1/resources?createdAfter=${after}&createdBefore=${before}`,
     );
     const body = res.body as ListResponse;
     expect(body.data.length).toBe(3);
@@ -135,20 +135,20 @@ describe('resources list', () => {
       Array.from({ length: 12 }, (_, i) => ({ name: `r${i}`, type: 'widget' })),
     );
 
-    const page1 = await ctx.request.get('/resources?limit=5');
+    const page1 = await ctx.request.get('/api/v1/resources?limit=5');
     const body1 = page1.body as ListResponse;
     expect(body1.data.length).toBe(5);
     expect(body1.nextCursor).not.toBeNull();
 
     const page2 = await ctx.request.get(
-      `/resources?limit=5&cursor=${encodeURIComponent(body1.nextCursor ?? '')}`,
+      `/api/v1/resources?limit=5&cursor=${encodeURIComponent(body1.nextCursor ?? '')}`,
     );
     const body2 = page2.body as ListResponse;
     expect(body2.data.length).toBe(5);
     expect(body2.nextCursor).not.toBeNull();
 
     const page3 = await ctx.request.get(
-      `/resources?limit=5&cursor=${encodeURIComponent(body2.nextCursor ?? '')}`,
+      `/api/v1/resources?limit=5&cursor=${encodeURIComponent(body2.nextCursor ?? '')}`,
     );
     const body3 = page3.body as ListResponse;
     expect(body3.data.length).toBe(2);
@@ -164,13 +164,13 @@ describe('resources list', () => {
   });
 
   it('rejects an invalid cursor', async () => {
-    const res = await ctx.request.get('/resources?cursor=not-a-cursor');
+    const res = await ctx.request.get('/api/v1/resources?cursor=not-a-cursor');
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION');
   });
 
   it('rejects limit > 100', async () => {
-    const res = await ctx.request.get('/resources?limit=101');
+    const res = await ctx.request.get('/api/v1/resources?limit=101');
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION');
   });

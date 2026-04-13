@@ -83,7 +83,7 @@ describe('rate-limit middleware — enabled, MAX=5', () => {
     const responses = [];
     for (let i = 0; i < 6; i += 1) {
       const res = await ctx.request
-        .get('/resources')
+        .get('/api/v1/resources')
         .set('X-Forwarded-For', NON_LOOPBACK_IP);
       responses.push(res);
     }
@@ -110,11 +110,9 @@ describe('rate-limit middleware — enabled, MAX=5', () => {
   it('429 response body is leak-free (no SQL fragments, stacks, or library names)', async () => {
     // Burn through the bucket so the next request fires the 429.
     for (let i = 0; i < 5; i += 1) {
-      await ctx.request.get('/resources').set('X-Forwarded-For', NON_LOOPBACK_IP);
+      await ctx.request.get('/api/v1/resources').set('X-Forwarded-For', NON_LOOPBACK_IP);
     }
-    const res = await ctx.request
-      .get('/resources')
-      .set('X-Forwarded-For', NON_LOOPBACK_IP);
+    const res = await ctx.request.get('/api/v1/resources').set('X-Forwarded-For', NON_LOOPBACK_IP);
 
     expect(res.status).toBe(429);
     assertNoLeak(res.body);
@@ -125,7 +123,7 @@ describe('rate-limit middleware — enabled, MAX=5', () => {
 
   it('loopback bypass holds — 12 requests with no X-Forwarded-For all succeed', async () => {
     for (let i = 0; i < 12; i += 1) {
-      const res = await ctx.request.get('/resources');
+      const res = await ctx.request.get('/api/v1/resources');
       expect(res.status, `request ${i} expected non-429`).not.toBe(429);
     }
   });
@@ -144,7 +142,7 @@ describe('rate-limit middleware — enabled, MAX=5', () => {
     const results = [];
     for (let i = 0; i < 6; i += 1) {
       const res = await ctx.request
-        .get('/resources')
+        .get('/api/v1/resources')
         .set('X-Forwarded-For', NON_LOOPBACK_IP);
       results.push(res.status);
     }
@@ -181,7 +179,7 @@ describe('rate-limit middleware — disabled via RATE_LIMIT_ENABLED=false', () =
     let successCount = 0;
     for (let i = 0; i < 100; i += 1) {
       const res = await ctx.request
-        .get('/resources')
+        .get('/api/v1/resources')
         .set('X-Forwarded-For', NON_LOOPBACK_IP);
       expect(res.status, `request ${i} expected 200, got ${res.status}`).toBe(200);
       successCount += 1;

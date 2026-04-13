@@ -6,14 +6,14 @@ Assumes s01–s11 are archived and s12 (rate limiting) lands. Does not repeat th
 
 ## 1. Authentication & authorization — blocker for prod
 
-- `POST/GET/PATCH/DELETE /resources` is fully open. Anyone who reaches the port owns the data.
+- `POST/GET/PATCH/DELETE /api/v1/resources` is fully open. Anyone who reaches the port owns the data.
 - `resources.owner_id` exists in the schema but nothing enforces it. A caller can read or mutate any resource by id.
-- **Minimum:** JWT bearer (RS256, JWKS-verified) on every `/resources` route; `owner_id` derived from the token, not the request body; list/get/update/delete scoped to the token's subject unless an `admin` claim is present.
+- **Minimum:** JWT bearer (RS256, JWKS-verified) on every `/api/v1/resources` route; `owner_id` derived from the token, not the request body; list/get/update/delete scoped to the token's subject unless an `admin` claim is present.
 - Middleware slot: after `rate-limit` (so anonymous floods are cheap to reject), before `express.json()`.
 
 ## 2. Optimistic concurrency control on PATCH
 
-- `PATCH /resources/:id` has no version guard. Two concurrent updates silently clobber — last writer wins, no 409.
+- `PATCH /api/v1/resources/:id` has no version guard. Two concurrent updates silently clobber — last writer wins, no 409.
 - **Minimum:** send `ETag: "<updated_at ISO>"` on every GET; require `If-Match` on PATCH/DELETE; repository adds `AND updated_at = $expected` to the `UPDATE`; zero rows affected → `ConflictError`.
 - Fits the existing `AppError` pipeline — no new error code needed.
 

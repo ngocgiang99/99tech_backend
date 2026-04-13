@@ -1,7 +1,7 @@
 /**
  * Cache-warm scenario — pre-warmed Redis.
  *
- * The setup() phase issues one GET /resources/:id for every id in ids.json to
+ * The setup() phase issues one GET /api/v1/resources/:id for every id in ids.json to
  * pre-populate the Redis cache before the measurement phase. The main load
  * then runs the same read-load workload as read-load.js but with the cache
  * fully warm — nearly all requests should return X-Cache: HIT.
@@ -54,7 +54,7 @@ export function setup() {
 
   let warmed = 0;
   for (const id of ids) {
-    const res = http.get(`${baseUrl}/resources/${id}`);
+    const res = http.get(`${baseUrl}/api/v1/resources/${id}`);
     if (res.status === 200) {
       warmed++;
     }

@@ -22,16 +22,16 @@ function baseUrl() {
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 /**
- * GET /resources/:id
+ * GET /api/v1/resources/:id
  * @param {string} id - Resource UUID
  * @returns {import('k6/http').RefinedResponse<'text'>}
  */
 export function getResource(id) {
-  return http.get(`${baseUrl()}/resources/${id}`);
+  return http.get(`${baseUrl()}/api/v1/resources/${id}`);
 }
 
 /**
- * GET /resources with optional query parameters.
+ * GET /api/v1/resources with optional query parameters.
  * @param {Object} [params] - Query params (limit, cursor, type, status, etc.)
  * @returns {import('k6/http').RefinedResponse<'text'>}
  */
@@ -40,38 +40,38 @@ export function listResources(params = {}) {
     .filter(([, v]) => v !== undefined && v !== null)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
-  const url = query ? `${baseUrl()}/resources?${query}` : `${baseUrl()}/resources`;
+  const url = query ? `${baseUrl()}/api/v1/resources?${query}` : `${baseUrl()}/api/v1/resources`;
   return http.get(url);
 }
 
 /**
- * POST /resources
+ * POST /api/v1/resources
  * @param {Object} payload - Resource body (name, type, status?, tags?, metadata?, owner_id?)
  * @returns {import('k6/http').RefinedResponse<'text'>}
  */
 export function createResource(payload) {
-  return http.post(`${baseUrl()}/resources`, JSON.stringify(payload), {
+  return http.post(`${baseUrl()}/api/v1/resources`, JSON.stringify(payload), {
     headers: JSON_HEADERS,
   });
 }
 
 /**
- * PATCH /resources/:id
+ * PATCH /api/v1/resources/:id
  * @param {string} id - Resource UUID
  * @param {Object} payload - Fields to update
  * @returns {import('k6/http').RefinedResponse<'text'>}
  */
 export function patchResource(id, payload) {
-  return http.patch(`${baseUrl()}/resources/${id}`, JSON.stringify(payload), {
+  return http.patch(`${baseUrl()}/api/v1/resources/${id}`, JSON.stringify(payload), {
     headers: JSON_HEADERS,
   });
 }
 
 /**
- * DELETE /resources/:id
+ * DELETE /api/v1/resources/:id
  * @param {string} id - Resource UUID
  * @returns {import('k6/http').RefinedResponse<'text'>}
  */
 export function deleteResource(id) {
-  return http.del(`${baseUrl()}/resources/${id}`);
+  return http.del(`${baseUrl()}/api/v1/resources/${id}`);
 }

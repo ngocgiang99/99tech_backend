@@ -5,11 +5,7 @@ import { NotFoundError, ValidationError } from '../../../shared/errors.js';
 import type { MetricsRegistry } from '../../../observability/metrics-registry.js';
 import type { ResourceService } from '../application/service.js';
 import { createRequestContext, type CacheStatus } from '../application/request-context.js';
-import {
-  CreateResourceSchema,
-  UpdateResourceSchema,
-  ListResourcesQuerySchema,
-} from '../schema.js';
+import { CreateResourceSchema, UpdateResourceSchema, ListResourcesQuerySchema } from '../schema.js';
 
 import { toDto } from './mapper.js';
 
@@ -75,7 +71,7 @@ export function createResourceController(
         throw handleZodError(parseResult.error);
       }
       const resource = await service.create(parseResult.data);
-      res.status(201).location(`/resources/${resource.id}`).json(toDto(resource));
+      res.status(201).location(`${req.baseUrl}/${resource.id}`).json(toDto(resource));
       recordOutcome('create', 'success');
     } catch (err) {
       recordOutcome('create', classifyOutcome(err));

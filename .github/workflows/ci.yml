@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "problem5/**"
+      - "problem6/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "problem5/**"
+      - "problem6/**"
+      - ".github/workflows/ci.yml"
+
+jobs:
+  problem5:
+    name: "quality-gates (problem5)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: problem5
+    env:
+      HUSKY: "0"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: problem5/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Run tests
+        run: pnpm test:unit
+
+  problem6:
+    name: "quality-gates (problem6)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: problem6
+    env:
+      HUSKY: "0"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install mise and project tools
+        uses: jdx/mise-action@v4
+        with:
+          version: 2026.4.8
+
+      - name: Install dependencies
+        run: mise run setup
+
+      - name: Type check
+        run: mise run typecheck
+
+      - name: Lint
+        run: mise run lint
+
+      - name: Run tests
+        run: mise run test
